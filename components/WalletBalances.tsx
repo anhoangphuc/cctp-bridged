@@ -119,15 +119,12 @@ function ChainBalance({
             Destination
           </h4>
           <div>
-            <label className="block text-sm text-zinc-600 dark:text-zinc-400 mb-2">
-              Network
-            </label>
             <select
               value={destinationChainId || ''}
               onChange={(e) => setDestinationChainId(Number(e.target.value) || null)}
-              className="w-full px-4 py-2.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full px-4 py-2.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="">Select</option>
+              <option value="">Select network</option>
               {availableChains.map((destChain) => (
                 <option key={destChain.id} value={destChain.id}>
                   {destChain.name}
@@ -135,17 +132,14 @@ function ChainBalance({
               ))}
             </select>
           </div>
-          <div>
-            <label className="block text-sm text-zinc-600 dark:text-zinc-400 mb-2">
-              Amount
-            </label>
+          <div className="space-y-3">
             <div className="relative">
               <input
                 type="number"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="0.00"
-                className="w-full px-4 py-2.5 pr-16 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="USDC Amount"
+                className="w-full px-4 py-2 pr-16 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 text-base font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
               <button
                 onClick={handleMaxClick}
