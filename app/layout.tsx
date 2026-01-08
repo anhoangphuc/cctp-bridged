@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { NetworkProvider } from "@/lib/context/NetworkContext";
+import { WagmiProvider } from "@/lib/context/WagmiProvider";
 import { Header } from "@/components/Header";
 
 const geistSans = Geist({
@@ -30,8 +31,10 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <NetworkProvider>
-          <Header />
-          {children}
+          <WagmiProvider>
+            <Header />
+            {children}
+          </WagmiProvider>
         </NetworkProvider>
       </body>
     </html>

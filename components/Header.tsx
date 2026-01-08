@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useNetwork } from '@/lib/context/NetworkContext';
+import { WalletConnect } from '@/components/WalletConnect';
 import type { NetworkEnvironment } from '@/types/network';
 
 export function Header() {
@@ -37,8 +38,10 @@ export function Header() {
             </h1>
           </div>
 
-          {/* Network Environment Switcher */}
-          <div className="relative" ref={dropdownRef}>
+          {/* Right Side: Network Switcher + Wallet Connect */}
+          <div className="flex items-center gap-4">
+            {/* Network Environment Switcher */}
+            <div className="relative" ref={dropdownRef}>
             <button
               onClick={() => setIsOpen(!isOpen)}
               className="flex items-center gap-2 px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 text-sm font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-colors"
@@ -80,6 +83,10 @@ export function Header() {
               </div>
             )}
           </div>
+
+          {/* Wallet Connect Button */}
+          <WalletConnect />
+        </div>
         </div>
       </div>
     </header>
