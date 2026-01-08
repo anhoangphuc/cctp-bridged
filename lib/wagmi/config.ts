@@ -20,6 +20,10 @@ export const testnetChains = [
   baseSepolia,
 ] as const;
 
+// Helper to get chain IDs
+export const mainnetChainIds = mainnetChains.map(chain => chain.id);
+export const testnetChainIds = testnetChains.map(chain => chain.id);
+
 // Wagmi config for mainnet
 export const mainnetConfig = createConfig({
   chains: mainnetChains,

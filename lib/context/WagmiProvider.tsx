@@ -8,7 +8,15 @@ import { mainnetConfig, testnetConfig } from '@/lib/wagmi/config';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import '@rainbow-me/rainbowkit/styles.css';
 
-const queryClient = new QueryClient();
+// Create a stable QueryClient instance
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 export function WagmiProvider({ children }: { children: ReactNode }) {
   const { environment } = useNetwork();
@@ -19,7 +27,7 @@ export function WagmiProvider({ children }: { children: ReactNode }) {
   }, [environment]);
 
   return (
-    <WagmiProviderBase config={config} reconnectOnMount={false}>
+    <WagmiProviderBase key={environment} config={config} reconnectOnMount={false}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider>
           {children}
