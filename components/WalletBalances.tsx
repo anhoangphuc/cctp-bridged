@@ -7,6 +7,7 @@ import { mainnetChains, testnetChains } from '@/lib/wagmi/config';
 import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, MESSAGE_TRANSMITTER_V2_EVM_ABI, MESSAGE_TRANSMITTER_ADDRESS, CHAIN_DOMAINS } from '@/constants/tokens';
 import { formatUnits, parseUnits, parseAbi, pad, toHex } from 'viem';
 import type { Chain } from 'wagmi/chains';
+import { fetchCCTPFee, fetchCCTPAttestation } from '@/lib/cctp/api';
 
 type StepStatus = 'pending' | 'processing' | 'success' | 'error';
 
@@ -179,56 +180,13 @@ function ChainBalance({
       setSteps(prev => ({ ...prev, deposit: { status: 'processing' } }));
 
       // Fetch fee from Iris API
-      const apiUrl = environment === 'mainnet'
-        ? 'https://iris-api.circle.com'
-        : 'https://iris-api-sandbox.circle.com';
-
-      let fee = BigInt(1000); // Default fallback
-      let finalityThreshold = 0;
-
-      try {
-        const feeResponse = await fetch(
-          `${apiUrl}/v2/burn/USDC/fees/${sourceDomain}/${destinationDomain}`,
-          {
-            method: 'GET',
-            headers: {
-              'Accept': 'application/json',
-            },
-          }
-        );
-
-        const feeData = await feeResponse.json();
-
-        console.log('feeData', feeData);
-
-        // Find the fee with finalityThreshold of 1000
-        if (Array.isArray(feeData)) {
-          const selectedFee = feeData.find((f: any) => f.finalityThreshold === 1000);
-          if (selectedFee) {
-            // Handle both integer and float values for maxFee (in basis points)
-            const bps = parseFloat(selectedFee.minimumFee);
-
-            // Calculate expected fee: (amount * bps / 10000) + 1
-            // For float bps, multiply by 100 to convert to integer basis points
-            const bpsInteger = Math.floor(bps * 1000);
-
-            console.log('bpsInteger', bpsInteger);
-            const expectedFee = (amountInWei * BigInt(bpsInteger)) / BigInt(10000000) + BigInt(1);
-
-            console.log('expectedFee', expectedFee);
-
-            // Use the higher of default fee or expected fee
-            if (fee < expectedFee) {
-              fee = expectedFee;
-            }
-            finalityThreshold = selectedFee.finalityThreshold;
-          }
-        } else {
-          console.log('No fees found');
-        }
-      } catch (feeError) {
-        console.warn('Failed to fetch fee from API, using default:', feeError);
-      }
+      const { fee, finalityThreshold } = await fetchCCTPFee(
+        environment,
+        sourceDomain,
+        destinationDomain,
+        amountInWei,
+        1000 // Target finality threshold
+      );
 
       // Submit depositForBurn transaction
       const hash = await writeDeposit({
@@ -283,75 +241,25 @@ function ChainBalance({
     try {
       setSteps(prev => ({ ...prev, fetchAttestation: { status: 'processing' } }));
 
-      // Determine API endpoint based on environment
-      const apiUrl = environment === 'mainnet'
-        ? 'https://iris-api.circle.com'
-        : 'https://iris-api-sandbox.circle.com';
-
       // Get source chain domain
       const sourceDomain = CHAIN_DOMAINS[chain.id as keyof typeof CHAIN_DOMAINS];
       const txHash = steps.deposit.txHash;
 
-      // Poll Circle's attestation API
-      let attestationResponse: any = null;
-      let messageBytes: string | null = null;
-      const maxAttempts = 60; // Try for up to 2 minutes (60 * 2 seconds)
-      let attempts = 0;
-
-      while (attempts < maxAttempts) {
-        attempts++;
-
-        try {
-          const response = await fetch(
-            `${apiUrl}/v2/messages/${sourceDomain}?transactionHash=${txHash}`,
-            {
-              method: 'GET',
-              headers: {
-                'Accept': 'application/json',
-              },
-            }
-          );
-
-          attestationResponse = await response.json();
-
-          // Check if we have a valid attestation
-          if (
-            !attestationResponse.error &&
-            attestationResponse.messages &&
-            attestationResponse.messages.length > 0 &&
-            attestationResponse.messages[0].attestation !== 'PENDING'
-          ) {
-            // Found the attestation
-            messageBytes = attestationResponse.messages[0].message;
-            break;
-          }
-
-          // Wait 2 seconds to avoid getting rate limited
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        } catch (fetchError) {
-          console.error('Attestation fetch attempt failed:', fetchError);
-          // Wait 2 seconds before retrying
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      }
-
-      if (!attestationResponse || !attestationResponse.messages || attestationResponse.messages.length === 0) {
-        throw new Error('Attestation not received within timeout period');
-      }
-
-      const message = attestationResponse.messages[0];
-      const attestation = message.attestation;
-
-      if (!attestation || attestation === 'PENDING') {
-        throw new Error('Attestation is still pending');
-      }
+      // Fetch attestation from Circle's Iris API
+      const { attestation, messageBytes } = await fetchCCTPAttestation(
+        environment,
+        sourceDomain,
+        txHash,
+        60,    // maxAttempts: Try for up to 2 minutes (60 * 2 seconds)
+        2000   // pollInterval: 2 seconds
+      );
 
       setSteps(prev => ({
         ...prev,
         fetchAttestation: {
           status: 'success',
           attestation,
-          messageHash: messageBytes || undefined,
+          messageHash: messageBytes,
         },
       }));
     } catch (error) {
