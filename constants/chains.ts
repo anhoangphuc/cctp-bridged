@@ -164,39 +164,3 @@ export const SUPPORTED_CHAINS = {
   mainnet: [...MAINNET_CHAINS, SOLANA_MAINNET],
   testnet: [...TESTNET_CHAINS, SOLANA_DEVNET],
 } as const;
-
-/**
- * Get chain configuration by ID
- */
-export function getChainConfig(
-  chainId: number | 'solana-mainnet' | 'solana-devnet',
-  environment: 'mainnet' | 'testnet'
-): ChainConfig | undefined {
-  const chains = SUPPORTED_CHAINS[environment];
-  return chains.find((chain) => chain.id === chainId);
-}
-
-/**
- * Get all available chains for an environment
- */
-export function getAvailableChains(environment: 'mainnet' | 'testnet'): ChainConfig[] {
-  return SUPPORTED_CHAINS[environment];
-}
-
-/**
- * Check if a chain ID is Solana
- */
-export function isSolanaChainId(chainId: number | string): chainId is 'solana-mainnet' | 'solana-devnet' {
-  return chainId === 'solana-mainnet' || chainId === 'solana-devnet';
-}
-
-/**
- * Get domain ID for any chain
- */
-export function getDomainForChain(
-  chainId: number | 'solana-mainnet' | 'solana-devnet',
-  environment: 'mainnet' | 'testnet'
-): number | undefined {
-  const chain = getChainConfig(chainId, environment);
-  return chain?.domain;
-}

@@ -2,12 +2,16 @@
 
 import { useState, useEffect } from 'react';
 import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { mainnetChains, testnetChains } from '@/lib/wagmi/config';
 import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, MESSAGE_TRANSMITTER_V2_EVM_ABI, MESSAGE_TRANSMITTER_ADDRESS, CHAIN_DOMAINS } from '@/constants/tokens';
 import { formatUnits, parseUnits, parseAbi, pad, toHex } from 'viem';
 import type { Chain } from 'wagmi/chains';
 import { fetchCCTPFee, fetchCCTPAttestation } from '@/lib/cctp/api';
+import { getUSDCBalance as getSolanaUSDCBalance } from '@/lib/solana/cctp';
+import { useCustomConnection } from '@/lib/solana/SolanaWalletProvider';
 
 type StepStatus = 'pending' | 'processing' | 'success' | 'error';
 
@@ -20,12 +24,16 @@ interface StepState {
 }
 
 export function WalletBalances() {
-  const { address, isConnected, chain: currentChain } = useAccount();
+  const { address: evmAddress, isConnected: isEvmConnected } = useAccount();
+  const { publicKey: solanaPublicKey, connected: isSolanaConnected } = useWallet();
   const { environment } = useNetwork();
 
   const chains = environment === 'mainnet' ? mainnetChains : testnetChains;
 
-  if (!isConnected || !address) {
+  // Check if any wallet is connected
+  const isAnyWalletConnected = isEvmConnected || isSolanaConnected;
+
+  if (!isAnyWalletConnected) {
     return (
       <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="text-center p-12 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
@@ -44,14 +52,23 @@ export function WalletBalances() {
       </h2>
 
       <div className="space-y-4">
-        {chains.map((chain) => (
+        {/* Show EVM chains only if EVM wallet is connected */}
+        {isEvmConnected && evmAddress && chains.map((chain) => (
           <ChainBalance
             key={chain.id}
             chain={chain}
-            address={address}
+            address={evmAddress}
             availableChains={chains.filter(c => c.id !== chain.id)}
           />
         ))}
+
+        {/* Show Solana balance only if Solana wallet is connected */}
+        {isSolanaConnected && solanaPublicKey && (
+          <SolanaBalance
+            publicKey={solanaPublicKey}
+            environment={environment}
+          />
+        )}
       </div>
     </div>
   );
@@ -678,6 +695,100 @@ function BridgeStepButton({
       {error && (
         <p className="text-xs text-red-600 dark:text-red-400 px-2">{error}</p>
       )}
+    </div>
+  );
+}
+
+// Solana Balance Component
+function SolanaBalance({
+  publicKey,
+  environment,
+}: {
+  publicKey: PublicKey;
+  environment: 'mainnet' | 'testnet';
+}) {
+  const connection = useCustomConnection();
+  const [solBalance, setSolBalance] = useState<number>(0);
+  const [usdcBalance, setUsdcBalance] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Fetch balances
+  useEffect(() => {
+    const fetchBalances = async () => {
+      try {
+        setIsLoading(true);
+
+        // Fetch SOL balance
+        const solBalanceLamports = await connection.getBalance(publicKey);
+        setSolBalance(solBalanceLamports / LAMPORTS_PER_SOL);
+
+        // Fetch USDC balance
+        const usdcBalanceBigInt = await getSolanaUSDCBalance(
+          connection,
+          publicKey,
+          environment
+        );
+        setUsdcBalance(Number(usdcBalanceBigInt) / 1_000_000); // USDC has 6 decimals
+      } catch (error) {
+        console.error('Failed to fetch Solana balances:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchBalances();
+  }, [publicKey, connection, environment]);
+
+  return (
+    <div className="p-8 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 relative">
+      {/* Three column layout */}
+      <div className="grid grid-cols-3 gap-8">
+        {/* Column 1: Source Network Info */}
+        <div className="space-y-4">
+          <h4 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase mb-4">
+            Source
+          </h4>
+          <div>
+            <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-50 mb-4">
+              Solana {environment === 'testnet' ? 'Devnet' : ''}
+            </div>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-zinc-600 dark:text-zinc-400">SOL</span>
+                <span className="font-mono text-zinc-900 dark:text-zinc-50 text-base">
+                  {isLoading ? '...' : solBalance.toFixed(4)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-zinc-600 dark:text-zinc-400">USDC</span>
+                <span className="font-mono text-zinc-900 dark:text-zinc-50 text-base">
+                  {isLoading ? '...' : usdcBalance.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Column 2: Bridge Details - Placeholder for now */}
+        <div className="space-y-4">
+          <h4 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase mb-4">
+            Destination
+          </h4>
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Solana bridging coming soon...
+          </div>
+        </div>
+
+        {/* Column 3: Action - Placeholder for now */}
+        <div className="space-y-4">
+          <h4 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase mb-4">
+            Action
+          </h4>
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Bridge actions coming soon...
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
