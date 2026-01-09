@@ -37,6 +37,23 @@ export const TOKEN_MESSENGER_ADDRESSES = {
   [baseSepolia.id]: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', // Base Sepolia (Domain 6)
 } as const;
 
+// CCTP Domain mappings for each chain
+export const CHAIN_DOMAINS = {
+  // Mainnet
+  [mainnet.id]: 0,
+  [polygon.id]: 7,
+  [arbitrum.id]: 3,
+  [optimism.id]: 2,
+  [base.id]: 6,
+
+  // Testnet
+  [sepolia.id]: 0,
+  [polygonAmoy.id]: 7,
+  [arbitrumSepolia.id]: 3,
+  [optimismSepolia.id]: 2,
+  [baseSepolia.id]: 6,
+} as const;
+
 // ERC20 ABI for balanceOf function
 export const ERC20_ABI = [
   {

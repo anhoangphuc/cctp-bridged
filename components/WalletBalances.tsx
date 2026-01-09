@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { mainnetChains, testnetChains } from '@/lib/wagmi/config';
-import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI } from '@/constants/tokens';
-import { formatUnits, parseUnits, parseAbi } from 'viem';
+import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, CHAIN_DOMAINS } from '@/constants/tokens';
+import { formatUnits, parseUnits, parseAbi, pad, toHex } from 'viem';
 import type { Chain } from 'wagmi/chains';
 
 type StepStatus = 'pending' | 'processing' | 'success' | 'error';
@@ -154,18 +154,54 @@ function ChainBalance({
 
   // Handler for Deposit step
   const handleDeposit = async () => {
-    if (!destinationChainId || !amount) return;
+    if (!destinationChainId || !amount || !publicClient) return;
 
     try {
+      const tokenMessengerAddress = TOKEN_MESSENGER_ADDRESSES[chain.id as keyof typeof TOKEN_MESSENGER_ADDRESSES] as `0x${string}`;
+      const usdcAddress = USDC_ADDRESSES[chain.id as keyof typeof USDC_ADDRESSES] as `0x${string}`;
+      const amountInWei = parseUnits(amount, USDC_DECIMALS);
+      const destinationDomain = CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
+
+      // Convert recipient address to bytes32 (pad to 32 bytes)
+      const mintRecipient = pad(address as `0x${string}`, { size: 32 });
+
+      // Set to processing state
       setSteps(prev => ({ ...prev, deposit: { status: 'processing' } }));
 
-      // TODO: Implement deposit logic
-      console.log('Deposit not yet implemented');
+      // Submit depositForBurn transaction
+      const hash = await writeDeposit({
+        address: tokenMessengerAddress,
+        abi: parseAbi(TOKEN_MESSENGER_V2_EVM_ABI),
+        functionName: 'depositForBurn',
+        args: [
+          amountInWei,                    // amount
+          destinationDomain,              // destinationDomain
+          mintRecipient,                  // mintRecipient (bytes32)
+          usdcAddress,                    // burnToken
+          pad('0x0', { size: 32 }),       // destinationCaller (0x0 for any caller)
+          BigInt(0),                      // maxFee (0 for now)
+          0,                              // minFinalityThreshold (0 for default)
+        ],
+      });
 
-      // Placeholder - remove when implementing
-      setTimeout(() => {
-        setSteps(prev => ({ ...prev, deposit: { status: 'success', txHash: '0x...' } }));
-      }, 2000);
+      // Store hash and continue processing
+      setSteps(prev => ({ ...prev, deposit: { status: 'processing', txHash: hash } }));
+
+      // Wait for transaction confirmation
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+      if (receipt.status === 'success') {
+        setSteps(prev => ({ ...prev, deposit: { status: 'success', txHash: hash } }));
+      } else {
+        setSteps(prev => ({
+          ...prev,
+          deposit: {
+            status: 'error',
+            txHash: hash,
+            error: 'Transaction reverted',
+          },
+        }));
+      }
     } catch (error) {
       console.error('Deposit error:', error);
       setSteps(prev => ({
