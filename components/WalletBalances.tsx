@@ -14,6 +14,8 @@ interface StepState {
   status: StepStatus;
   txHash?: string;
   error?: string;
+  attestation?: string;
+  messageHash?: string;
 }
 
 export function WalletBalances() {
@@ -63,6 +65,7 @@ function ChainBalance({
   address: `0x${string}`;
   availableChains: readonly Chain[];
 }) {
+  const { environment } = useNetwork();
   const [destinationChainId, setDestinationChainId] = useState<number | null>(null);
   const [amount, setAmount] = useState('');
   const [steps, setSteps] = useState<Record<string, StepState>>({
@@ -169,6 +172,7 @@ function ChainBalance({
       setSteps(prev => ({ ...prev, deposit: { status: 'processing' } }));
 
       // Submit depositForBurn transaction
+      let fee = amountInWei / BigInt(10000); // 1 bps for fee
       const hash = await writeDeposit({
         address: tokenMessengerAddress,
         abi: parseAbi(TOKEN_MESSENGER_V2_EVM_ABI),
@@ -179,7 +183,7 @@ function ChainBalance({
           mintRecipient,                  // mintRecipient (bytes32)
           usdcAddress,                    // burnToken
           pad('0x0', { size: 32 }),       // destinationCaller (0x0 for any caller)
-          BigInt(0),                      // maxFee (0 for now)
+          fee,                            // maxFee (1 bps for now)
           0,                              // minFinalityThreshold (0 for default)
         ],
       });
@@ -216,16 +220,82 @@ function ChainBalance({
 
   // Handler for Fetch Attestation step
   const handleFetchAttestation = async () => {
+    if (!publicClient || !steps.deposit.txHash) return;
+
     try {
       setSteps(prev => ({ ...prev, fetchAttestation: { status: 'processing' } }));
 
-      // TODO: Implement fetch attestation logic
-      console.log('Fetch attestation not yet implemented');
+      // Determine API endpoint based on environment
+      const apiUrl = environment === 'mainnet'
+        ? 'https://iris-api.circle.com'
+        : 'https://iris-api-sandbox.circle.com';
 
-      // Placeholder - remove when implementing
-      setTimeout(() => {
-        setSteps(prev => ({ ...prev, fetchAttestation: { status: 'success' } }));
-      }, 2000);
+      // Get source chain domain
+      const sourceDomain = CHAIN_DOMAINS[chain.id as keyof typeof CHAIN_DOMAINS];
+      const txHash = steps.deposit.txHash;
+
+      // Poll Circle's attestation API
+      let attestationResponse: any = null;
+      let messageBytes: string | null = null;
+      const maxAttempts = 60; // Try for up to 2 minutes (60 * 2 seconds)
+      let attempts = 0;
+
+      while (attempts < maxAttempts) {
+        attempts++;
+
+        try {
+          const response = await fetch(
+            `${apiUrl}/v2/messages/${sourceDomain}?transactionHash=${txHash}`,
+            {
+              method: 'GET',
+              headers: {
+                'Accept': 'application/json',
+              },
+            }
+          );
+
+          attestationResponse = await response.json();
+
+          // Check if we have a valid attestation
+          if (
+            !attestationResponse.error &&
+            attestationResponse.messages &&
+            attestationResponse.messages.length > 0 &&
+            attestationResponse.messages[0].attestation !== 'PENDING'
+          ) {
+            // Found the attestation
+            messageBytes = attestationResponse.messages[0].message;
+            break;
+          }
+
+          // Wait 2 seconds to avoid getting rate limited
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (fetchError) {
+          console.error('Attestation fetch attempt failed:', fetchError);
+          // Wait 2 seconds before retrying
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+
+      if (!attestationResponse || !attestationResponse.messages || attestationResponse.messages.length === 0) {
+        throw new Error('Attestation not received within timeout period');
+      }
+
+      const message = attestationResponse.messages[0];
+      const attestation = message.attestation;
+
+      if (!attestation || attestation === 'PENDING') {
+        throw new Error('Attestation is still pending');
+      }
+
+      setSteps(prev => ({
+        ...prev,
+        fetchAttestation: {
+          status: 'success',
+          attestation,
+          messageHash: messageBytes || undefined,
+        },
+      }));
     } catch (error) {
       console.error('Fetch attestation error:', error);
       setSteps(prev => ({
