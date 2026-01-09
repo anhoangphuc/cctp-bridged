@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { mainnetChains, testnetChains } from '@/lib/wagmi/config';
-import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, CHAIN_DOMAINS } from '@/constants/tokens';
+import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, MESSAGE_TRANSMITTER_V2_EVM_ABI, MESSAGE_TRANSMITTER_ADDRESS, CHAIN_DOMAINS } from '@/constants/tokens';
 import { formatUnits, parseUnits, parseAbi, pad, toHex } from 'viem';
 import type { Chain } from 'wagmi/chains';
 
@@ -78,7 +78,11 @@ function ChainBalance({
   // Wagmi hooks for transactions
   const { writeContractAsync: writeApprove } = useWriteContract();
   const { writeContractAsync: writeDeposit } = useWriteContract();
+  const { writeContractAsync: writeClaim } = useWriteContract();
   const publicClient = usePublicClient();
+
+  // Get public client for destination chain
+  const destinationPublicClient = usePublicClient({ chainId: destinationChainId || undefined });
 
   // Fetch ETH balance
   const { data: ethBalance } = useBalance({
@@ -310,18 +314,55 @@ function ChainBalance({
 
   // Handler for Claim step
   const handleClaim = async () => {
-    if (!destinationChainId) return;
+    if (!destinationChainId || !destinationPublicClient || !steps.fetchAttestation.attestation || !steps.fetchAttestation.messageHash) {
+      console.error('Missing required data for claim');
+      return;
+    }
 
     try {
       setSteps(prev => ({ ...prev, claim: { status: 'processing' } }));
 
-      // TODO: Implement claim logic
-      console.log('Claim not yet implemented');
+      // Get MessageTransmitter address on destination chain
+      const messageTransmitterAddress = MESSAGE_TRANSMITTER_ADDRESS[destinationChainId as keyof typeof MESSAGE_TRANSMITTER_ADDRESS] as `0x${string}`;
 
-      // Placeholder - remove when implementing
-      setTimeout(() => {
-        setSteps(prev => ({ ...prev, claim: { status: 'success', txHash: '0x...' } }));
-      }, 2000);
+      // Get the message bytes and attestation from fetchAttestation step
+      const messageBytes = steps.fetchAttestation.messageHash as `0x${string}`;
+      const attestation = steps.fetchAttestation.attestation as `0x${string}`;
+
+      console.log('Claiming on destination chain:', {
+        destinationChainId,
+        messageTransmitterAddress,
+        messageBytes,
+        attestation,
+      });
+
+      // Submit receiveMessage transaction on destination chain
+      const hash = await writeClaim({
+        address: messageTransmitterAddress,
+        abi: parseAbi(MESSAGE_TRANSMITTER_V2_EVM_ABI),
+        functionName: 'receiveMessage',
+        args: [messageBytes, attestation],
+        chainId: destinationChainId,
+      });
+
+      // Store hash and continue processing
+      setSteps(prev => ({ ...prev, claim: { status: 'processing', txHash: hash } }));
+
+      // Wait for transaction confirmation on destination chain
+      const receipt = await destinationPublicClient.waitForTransactionReceipt({ hash });
+
+      if (receipt.status === 'success') {
+        setSteps(prev => ({ ...prev, claim: { status: 'success', txHash: hash } }));
+      } else {
+        setSteps(prev => ({
+          ...prev,
+          claim: {
+            status: 'error',
+            txHash: hash,
+            error: 'Transaction reverted',
+          },
+        }));
+      }
     } catch (error) {
       console.error('Claim error:', error);
       setSteps(prev => ({

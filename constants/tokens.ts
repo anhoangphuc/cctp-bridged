@@ -37,6 +37,22 @@ export const TOKEN_MESSENGER_ADDRESSES = {
   [baseSepolia.id]: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', // Base Sepolia (Domain 6)
 } as const;
 
+export const MESSAGE_TRANSMITTER_ADDRESS = {
+  // Mainnet
+  [mainnet.id]: '0x81D40F21F12A8F0E3252Bccb954D722d4c464B64',
+  [polygon.id]: '0x81D40F21F12A8F0E3252Bccb954D722d4c464B64',
+  [arbitrum.id]: '0x81D40F21F12A8F0E3252Bccb954D722d4c464B64',
+  [optimism.id]: '0x81D40F21F12A8F0E3252Bccb954D722d4c464B64',
+  [base.id]: '0x81D40F21F12A8F0E3252Bccb954D722d4c464B64',
+
+  // Testnet
+  [sepolia.id]: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  [polygonAmoy.id]: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  [arbitrumSepolia.id]: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  [optimismSepolia.id]: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+  [baseSepolia.id]: '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275',
+} as const;
+
 // CCTP Domain mappings for each chain
 export const CHAIN_DOMAINS = {
   // Mainnet
