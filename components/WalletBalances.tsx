@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { mainnetChains, testnetChains } from '@/lib/wagmi/config';
 import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, MESSAGE_TRANSMITTER_V2_EVM_ABI, MESSAGE_TRANSMITTER_ADDRESS, CHAIN_DOMAINS } from '@/constants/tokens';
@@ -19,7 +19,7 @@ interface StepState {
 }
 
 export function WalletBalances() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, chain: currentChain } = useAccount();
   const { environment } = useNetwork();
 
   const chains = environment === 'mainnet' ? mainnetChains : testnetChains;
@@ -80,6 +80,8 @@ function ChainBalance({
   const { writeContractAsync: writeDeposit } = useWriteContract();
   const { writeContractAsync: writeClaim } = useWriteContract();
   const publicClient = usePublicClient();
+  const { switchChainAsync } = useSwitchChain();
+  const { chain: currentChain } = useAccount();
 
   // Get public client for destination chain
   const destinationPublicClient = usePublicClient({ chainId: destinationChainId || undefined });
@@ -321,6 +323,17 @@ function ChainBalance({
 
     try {
       setSteps(prev => ({ ...prev, claim: { status: 'processing' } }));
+
+      // Check if wallet is on the correct network (destination chain)
+      if (currentChain?.id !== destinationChainId) {
+        console.log('Switching network to destination chain:', destinationChainId);
+
+        // Prompt user to switch to destination network
+        await switchChainAsync({ chainId: destinationChainId });
+
+        // Wait a bit for the network switch to complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
 
       // Get MessageTransmitter address on destination chain
       const messageTransmitterAddress = MESSAGE_TRANSMITTER_ADDRESS[destinationChainId as keyof typeof MESSAGE_TRANSMITTER_ADDRESS] as `0x${string}`;
