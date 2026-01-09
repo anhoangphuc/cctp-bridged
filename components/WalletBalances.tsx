@@ -1,14 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useAccount, useBalance, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useState } from 'react';
+import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient } from 'wagmi';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { mainnetChains, testnetChains } from '@/lib/wagmi/config';
 import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI } from '@/constants/tokens';
 import { formatUnits, parseUnits, parseAbi } from 'viem';
 import type { Chain } from 'wagmi/chains';
 
-type BridgeStep = 'idle' | 'approve' | 'deposit' | 'fetchAttestation' | 'claim' | 'completed';
 type StepStatus = 'pending' | 'processing' | 'success' | 'error';
 
 interface StepState {
@@ -66,7 +65,6 @@ function ChainBalance({
 }) {
   const [destinationChainId, setDestinationChainId] = useState<number | null>(null);
   const [amount, setAmount] = useState('');
-  const [currentStep, setCurrentStep] = useState<BridgeStep>('idle');
   const [steps, setSteps] = useState<Record<string, StepState>>({
     approve: { status: 'pending' },
     deposit: { status: 'pending' },
@@ -74,18 +72,10 @@ function ChainBalance({
     claim: { status: 'pending' },
   });
 
-  // Wagmi hooks for approve transaction
-  const { writeContractAsync: writeApprove, data: approveHash, error: approveError } = useWriteContract();
-  const { isLoading: isApproving, isSuccess: isApproveSuccess } = useWaitForTransactionReceipt({
-    hash: approveHash,
-  });
-
-  // Log approve errors
-  useEffect(() => {
-    if (approveError) {
-      console.error('Approve error from hook:', approveError);
-    }
-  }, [approveError]);
+  // Wagmi hooks for transactions
+  const { writeContractAsync: writeApprove } = useWriteContract();
+  const { writeContractAsync: writeDeposit } = useWriteContract();
+  const publicClient = usePublicClient();
 
   // Fetch ETH balance
   const { data: ethBalance } = useBalance({
@@ -112,63 +102,19 @@ function ChainBalance({
 
   const destinationChain = availableChains.find(c => c.id === destinationChainId);
 
-  // Track approve transaction status
-  useEffect(() => {
-    if (currentStep === 'approve') {
-      if (isApproving) {
-        setSteps(prev => ({
-          ...prev,
-          approve: { status: 'processing', txHash: approveHash },
-        }));
-      } else if (isApproveSuccess && approveHash) {
-        setSteps(prev => ({
-          ...prev,
-          approve: { status: 'success', txHash: approveHash },
-        }));
-        // Move to next step
-        setCurrentStep('deposit');
-      } else if (approveError) {
-        setSteps(prev => ({
-          ...prev,
-          approve: {
-            status: 'error',
-            error: approveError.message || 'Approval failed',
-          },
-        }));
-        setCurrentStep('idle');
-      }
-    }
-  }, [isApproving, isApproveSuccess, approveError, approveHash, currentStep]);
-
-  const handleBridge = async () => {
-    console.log('handleBridge called', { destinationChainId, amount });
-
-    if (!destinationChainId || !amount) {
-      console.log('Missing destinationChainId or amount');
-      return;
-    }
+  // Handler for Approve step
+  const handleApprove = async () => {
+    if (!destinationChainId || !amount || !publicClient) return;
 
     try {
-      // Start the bridging process
-      setCurrentStep('approve');
-
-      // Step 1: Approve USDC spending
       const tokenMessengerAddress = TOKEN_MESSENGER_ADDRESSES[chain.id as keyof typeof TOKEN_MESSENGER_ADDRESSES] as `0x${string}`;
       const usdcAddress = USDC_ADDRESSES[chain.id as keyof typeof USDC_ADDRESSES] as `0x${string}`;
       const amountInWei = parseUnits(amount, USDC_DECIMALS);
 
-      console.log('Approve details:', {
-        chainId: chain.id,
-        tokenMessengerAddress,
-        usdcAddress,
-        amountInWei: amountInWei.toString(),
-      });
+      // Set to processing state
+      setSteps(prev => ({ ...prev, approve: { status: 'processing' } }));
 
-      setSteps(prev => ({
-        ...prev,
-        approve: { status: 'processing' },
-      }));
-
+      // Submit transaction
       const hash = await writeApprove({
         address: usdcAddress,
         abi: parseAbi(APPROVE_EVM_ABI),
@@ -176,17 +122,109 @@ function ChainBalance({
         args: [tokenMessengerAddress, amountInWei],
       });
 
-      console.log('Approve transaction submitted:', hash);
+      // Store hash and continue processing
+      setSteps(prev => ({ ...prev, approve: { status: 'processing', txHash: hash } }));
+
+      // Wait for transaction confirmation
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+      if (receipt.status === 'success') {
+        setSteps(prev => ({ ...prev, approve: { status: 'success', txHash: hash } }));
+      } else {
+        setSteps(prev => ({
+          ...prev,
+          approve: {
+            status: 'error',
+            txHash: hash,
+            error: 'Transaction reverted',
+          },
+        }));
+      }
     } catch (error) {
-      console.error('Bridge error:', error);
+      console.error('Approve error:', error);
       setSteps(prev => ({
         ...prev,
         approve: {
           status: 'error',
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : 'Approval failed',
         },
       }));
-      setCurrentStep('idle');
+    }
+  };
+
+  // Handler for Deposit step
+  const handleDeposit = async () => {
+    if (!destinationChainId || !amount) return;
+
+    try {
+      setSteps(prev => ({ ...prev, deposit: { status: 'processing' } }));
+
+      // TODO: Implement deposit logic
+      console.log('Deposit not yet implemented');
+
+      // Placeholder - remove when implementing
+      setTimeout(() => {
+        setSteps(prev => ({ ...prev, deposit: { status: 'success', txHash: '0x...' } }));
+      }, 2000);
+    } catch (error) {
+      console.error('Deposit error:', error);
+      setSteps(prev => ({
+        ...prev,
+        deposit: {
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Deposit failed',
+        },
+      }));
+    }
+  };
+
+  // Handler for Fetch Attestation step
+  const handleFetchAttestation = async () => {
+    try {
+      setSteps(prev => ({ ...prev, fetchAttestation: { status: 'processing' } }));
+
+      // TODO: Implement fetch attestation logic
+      console.log('Fetch attestation not yet implemented');
+
+      // Placeholder - remove when implementing
+      setTimeout(() => {
+        setSteps(prev => ({ ...prev, fetchAttestation: { status: 'success' } }));
+      }, 2000);
+    } catch (error) {
+      console.error('Fetch attestation error:', error);
+      setSteps(prev => ({
+        ...prev,
+        fetchAttestation: {
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Fetch attestation failed',
+        },
+      }));
+    }
+  };
+
+  // Handler for Claim step
+  const handleClaim = async () => {
+    if (!destinationChainId) return;
+
+    try {
+      setSteps(prev => ({ ...prev, claim: { status: 'processing' } }));
+
+      // TODO: Implement claim logic
+      console.log('Claim not yet implemented');
+
+      // Placeholder - remove when implementing
+      setTimeout(() => {
+        setSteps(prev => ({ ...prev, claim: { status: 'success', txHash: '0x...' } }));
+      }, 2000);
+    } catch (error) {
+      console.error('Claim error:', error);
+      setSteps(prev => ({
+        ...prev,
+        claim: {
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Claim failed',
+        },
+      }));
     }
   };
 
@@ -282,74 +320,67 @@ function ChainBalance({
             Action
           </h4>
 
-          {currentStep === 'idle' ? (
-            <button
-              onClick={handleBridge}
+          <div className="space-y-3">
+            {/* Step 1: Approve */}
+            <BridgeStepButton
+              step="Approve"
+              status={steps.approve.status}
+              txHash={steps.approve.txHash}
+              chainId={chain.id}
+              getExplorerUrl={getExplorerUrl}
+              error={steps.approve.error}
+              onClick={handleApprove}
               disabled={!destinationChainId || !amount || parseFloat(amount) <= 0 || parseFloat(amount) > usdcBalanceNumber}
-              className="w-full px-4 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-300 dark:disabled:bg-zinc-700 disabled:cursor-not-allowed text-white font-medium text-sm transition-colors"
-            >
-              {!destinationChainId
-                ? 'Select network'
-                : !amount || parseFloat(amount) <= 0
-                ? 'Enter amount'
-                : parseFloat(amount) > usdcBalanceNumber
-                ? 'Insufficient'
-                : 'Bridge'
-              }
-            </button>
-          ) : (
-            <div className="space-y-3">
-              {/* Step 1: Approve */}
-              <BridgeStepItem
-                step="Approve"
-                status={steps.approve.status}
-                txHash={steps.approve.txHash}
-                chainId={chain.id}
-                getExplorerUrl={getExplorerUrl}
-                error={steps.approve.error}
-              />
+            />
 
-              {/* Step 2: Deposit */}
-              <BridgeStepItem
-                step="Deposit"
-                status={steps.deposit.status}
-                txHash={steps.deposit.txHash}
-                chainId={chain.id}
-                getExplorerUrl={getExplorerUrl}
-                error={steps.deposit.error}
-              />
+            {/* Step 2: Deposit */}
+            <BridgeStepButton
+              step="Deposit"
+              status={steps.deposit.status}
+              txHash={steps.deposit.txHash}
+              chainId={chain.id}
+              getExplorerUrl={getExplorerUrl}
+              error={steps.deposit.error}
+              onClick={handleDeposit}
+              disabled={steps.approve.status !== 'success'}
+            />
 
-              {/* Step 3: Fetch Attestation */}
-              <BridgeStepItem
-                step="Fetch Attestation"
-                status={steps.fetchAttestation.status}
-                error={steps.fetchAttestation.error}
-              />
+            {/* Step 3: Fetch Attestation */}
+            <BridgeStepButton
+              step="Fetch Attestation"
+              status={steps.fetchAttestation.status}
+              error={steps.fetchAttestation.error}
+              onClick={handleFetchAttestation}
+              disabled={steps.deposit.status !== 'success'}
+            />
 
-              {/* Step 4: Claim */}
-              <BridgeStepItem
-                step="Claim"
-                status={steps.claim.status}
-                txHash={steps.claim.txHash}
-                chainId={destinationChainId || chain.id}
-                getExplorerUrl={getExplorerUrl}
-                error={steps.claim.error}
-              />
-            </div>
-          )}
+            {/* Step 4: Claim */}
+            <BridgeStepButton
+              step="Claim"
+              status={steps.claim.status}
+              txHash={steps.claim.txHash}
+              chainId={destinationChainId || chain.id}
+              getExplorerUrl={getExplorerUrl}
+              error={steps.claim.error}
+              onClick={handleClaim}
+              disabled={steps.fetchAttestation.status !== 'success'}
+            />
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function BridgeStepItem({
+function BridgeStepButton({
   step,
   status,
   txHash,
   chainId,
   getExplorerUrl,
   error,
+  onClick,
+  disabled,
 }: {
   step: string;
   status: StepStatus;
@@ -357,6 +388,8 @@ function BridgeStepItem({
   chainId?: number;
   getExplorerUrl?: (chainId: number, txHash: string) => string;
   error?: string;
+  onClick: () => void;
+  disabled: boolean;
 }) {
   const getStatusIcon = () => {
     switch (status) {
@@ -387,48 +420,55 @@ function BridgeStepItem({
     }
   };
 
-  const getStatusText = () => {
-    switch (status) {
-      case 'pending':
-        return 'Pending';
-      case 'processing':
-        return 'Processing...';
-      case 'success':
-        return 'Success';
-      case 'error':
-        return 'Failed';
+  const getButtonText = () => {
+    if (status === 'success') return 'Completed';
+    if (status === 'processing') {
+      // Show gerund form during processing
+      if (step === 'Approve') return 'Approving...';
+      if (step === 'Deposit') return 'Depositing...';
+      if (step === 'Fetch Attestation') return 'Fetching...';
+      if (step === 'Claim') return 'Claiming...';
+      return 'Processing...';
     }
+    if (status === 'error') return 'Retry';
+    return step;
   };
 
   return (
-    <div className="flex items-start gap-3 p-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50">
-      <div className="flex-shrink-0 mt-0.5">{getStatusIcon()}</div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-50">{step}</span>
-          <span className={`text-xs ${
-            status === 'success' ? 'text-green-600 dark:text-green-400' :
-            status === 'error' ? 'text-red-600 dark:text-red-400' :
-            status === 'processing' ? 'text-blue-600 dark:text-blue-400' :
-            'text-zinc-500 dark:text-zinc-400'
-          }`}>
-            {getStatusText()}
-          </span>
-        </div>
-        {txHash && chainId && getExplorerUrl && (
-          <a
-            href={getExplorerUrl(chainId, txHash)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-blue-600 dark:text-blue-400 hover:underline truncate block"
-          >
-            View transaction →
-          </a>
-        )}
-        {error && (
-          <p className="text-xs text-red-600 dark:text-red-400 mt-1">{error}</p>
-        )}
-      </div>
+    <div className="space-y-2">
+      <button
+        onClick={onClick}
+        disabled={disabled || status === 'processing' || status === 'success'}
+        className={`w-full px-4 py-3 rounded-lg font-medium text-sm transition-colors flex items-center justify-between ${
+          status === 'success'
+            ? 'bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400 cursor-not-allowed'
+            : status === 'error'
+            ? 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/30'
+            : status === 'processing'
+            ? 'bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 cursor-not-allowed'
+            : disabled
+            ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed'
+            : 'bg-blue-600 hover:bg-blue-700 text-white'
+        }`}
+      >
+        <span>{getButtonText()}</span>
+        {getStatusIcon()}
+      </button>
+
+      {txHash && chainId && getExplorerUrl && (
+        <a
+          href={getExplorerUrl(chainId, txHash)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs text-blue-600 dark:text-blue-400 hover:underline block px-2"
+        >
+          View transaction →
+        </a>
+      )}
+
+      {error && (
+        <p className="text-xs text-red-600 dark:text-red-400 px-2">{error}</p>
+      )}
     </div>
   );
 }
