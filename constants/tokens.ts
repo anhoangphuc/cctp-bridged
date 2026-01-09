@@ -20,6 +20,23 @@ export const USDC_ADDRESSES = {
 // USDC decimals (standard is 6 for all chains)
 export const USDC_DECIMALS = 6;
 
+// TokenMessenger contract addresses for CCTP
+export const TOKEN_MESSENGER_ADDRESSES = {
+  // Mainnet
+  [mainnet.id]: '0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d',
+  [polygon.id]: '0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d',
+  [arbitrum.id]: '0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d',
+  [optimism.id]: '0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d',
+  [base.id]: '0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d',
+
+  // Testnet - All testnets use the same address
+  [sepolia.id]: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', // Ethereum Sepolia (Domain 0)
+  [polygonAmoy.id]: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', // Polygon PoS Amoy (Domain 7)
+  [arbitrumSepolia.id]: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', // Arbitrum Sepolia (Domain 3)
+  [optimismSepolia.id]: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', // OP Sepolia (Domain 2)
+  [baseSepolia.id]: '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA', // Base Sepolia (Domain 6)
+} as const;
+
 // ERC20 ABI for balanceOf function
 export const ERC20_ABI = [
   {
@@ -30,3 +47,14 @@ export const ERC20_ABI = [
     type: 'function',
   },
 ] as const;
+
+export const APPROVE_EVM_ABI = [
+  "function approve(address spender, uint256 amount) public returns (bool)",
+];
+export const TOKEN_MESSENGER_V2_EVM_ABI = [
+  "function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold) public",
+  "function depositForBurnWithHook(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold, bytes hookData) public",
+];
+export const MESSAGE_TRANSMITTER_V2_EVM_ABI = [
+  "function receiveMessage(bytes message, bytes attestation) public returns (bool)",
+];
