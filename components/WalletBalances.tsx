@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { mainnetChains, testnetChains } from '@/lib/wagmi/config';
@@ -69,6 +69,7 @@ function ChainBalance({
   const { environment } = useNetwork();
   const [destinationChainId, setDestinationChainId] = useState<number | null>(null);
   const [amount, setAmount] = useState('');
+  const [minimumFee, setMinimumFee] = useState<string>('0');
   const [steps, setSteps] = useState<Record<string, StepState>>({
     approve: { status: 'pending' },
     deposit: { status: 'pending' },
@@ -110,7 +111,53 @@ function ChainBalance({
     setAmount(usdcBalanceNumber.toString());
   };
 
+  const handleNewBridge = () => {
+    // Reset all states
+    setDestinationChainId(null);
+    setAmount('');
+    setMinimumFee('0');
+    setSteps({
+      approve: { status: 'pending' },
+      deposit: { status: 'pending' },
+      fetchAttestation: { status: 'pending' },
+      claim: { status: 'pending' },
+    });
+  };
+
   const destinationChain = availableChains.find(c => c.id === destinationChainId);
+
+  // Fetch minimum fee when destination chain or amount changes
+  useEffect(() => {
+    const fetchFee = async () => {
+      if (!destinationChainId || !amount || parseFloat(amount) <= 0) {
+        setMinimumFee('0');
+        return;
+      }
+
+      try {
+        const amountInWei = parseUnits(amount, USDC_DECIMALS);
+        const sourceDomain = CHAIN_DOMAINS[chain.id as keyof typeof CHAIN_DOMAINS];
+        const destinationDomain = CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
+
+        const { fee } = await fetchCCTPFee(
+          environment,
+          sourceDomain,
+          destinationDomain,
+          amountInWei,
+          1000 // Target finality threshold for fast transfer
+        );
+
+        // Convert fee to USDC display format
+        const feeInUsdc = formatUnits(fee, USDC_DECIMALS);
+        setMinimumFee(parseFloat(feeInUsdc).toFixed(6));
+      } catch (error) {
+        console.error('Failed to fetch fee:', error);
+        setMinimumFee('0');
+      }
+    };
+
+    fetchFee();
+  }, [destinationChainId, amount, chain.id, environment]);
 
   // Handler for Approve step
   const handleApprove = async () => {
@@ -367,7 +414,20 @@ function ChainBalance({
   };
 
   return (
-    <div className="p-8 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
+    <div className="p-8 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 relative">
+      {/* New Bridge button - shown only after successful claim */}
+      {steps.claim.status === 'success' && (
+        <button
+          onClick={handleNewBridge}
+          className="absolute top-4 right-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          New Bridge
+        </button>
+      )}
+
       {/* Three column layout */}
       <div className="grid grid-cols-3 gap-8">
         {/* Column 1: Source Network Info */}
@@ -431,6 +491,35 @@ function ChainBalance({
                 MAX
               </button>
             </div>
+            {destinationChainId && amount && parseFloat(amount) > 0 && (
+              <div className="flex justify-between items-center text-sm px-1">
+                <div className="flex items-center gap-1 group relative">
+                  <span className="text-zinc-600 dark:text-zinc-400">Fast Transfer Fee</span>
+                  <svg
+                    className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500 cursor-help"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-64 p-2.5 bg-zinc-900 dark:bg-zinc-800 text-white text-xs rounded-lg shadow-lg z-10">
+                    <div className="relative">
+                      This fee is required and paid to the CCTP Protocol. We don't receive any fee.
+                      <div className="absolute -bottom-1 left-4 w-2 h-2 bg-zinc-900 dark:bg-zinc-800 rotate-45"></div>
+                    </div>
+                  </div>
+                </div>
+                <span className="font-mono text-zinc-900 dark:text-zinc-50">
+                  {minimumFee} USDC
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
