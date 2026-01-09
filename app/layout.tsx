@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { NetworkProvider } from "@/lib/context/NetworkContext";
 import { WagmiProvider } from "@/lib/context/WagmiProvider";
+import { SolanaWalletProvider } from "@/lib/solana/SolanaWalletProvider";
 import { Header } from "@/components/Header";
 
 const geistSans = Geist({
@@ -32,8 +33,10 @@ export default function RootLayout({
       >
         <NetworkProvider>
           <WagmiProvider>
-            <Header />
-            {children}
+            <SolanaWalletProvider>
+              <Header />
+              {children}
+            </SolanaWalletProvider>
           </WagmiProvider>
         </NetworkProvider>
       </body>

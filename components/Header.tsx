@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { WalletConnect } from '@/components/WalletConnect';
+import { SolanaWalletButton } from '@/components/SolanaWalletButton';
 import type { NetworkEnvironment } from '@/types/network';
 
 export function Header() {
@@ -84,8 +85,11 @@ export function Header() {
             )}
           </div>
 
-          {/* Wallet Connect Button */}
-          <WalletConnect />
+          {/* Wallet Connect Buttons */}
+          <div className="flex items-center gap-3">
+            <WalletConnect />
+            <SolanaWalletButton />
+          </div>
         </div>
         </div>
       </div>

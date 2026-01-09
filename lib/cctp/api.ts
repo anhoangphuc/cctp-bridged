@@ -30,10 +30,11 @@ function getIrisApiUrl(environment: 'mainnet' | 'testnet'): string {
 /**
  * Fetch fee data from Circle's Iris API
  * @param environment - Network environment (mainnet or testnet)
- * @param sourceDomain - Source chain domain ID
- * @param destinationDomain - Destination chain domain ID
+ * @param sourceDomain - Source chain domain ID (5 for Solana)
+ * @param destinationDomain - Destination chain domain ID (5 for Solana)
+ * @param amount - Amount to bridge
  * @param targetFinalityThreshold - Target finality threshold (default: 1000)
- * @returns Fee in wei and finality threshold
+ * @returns Fee in wei/lamports and finality threshold
  */
 export async function fetchCCTPFee(
   environment: 'mainnet' | 'testnet',

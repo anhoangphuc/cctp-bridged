@@ -70,6 +70,9 @@ export const CHAIN_DOMAINS = {
   [baseSepolia.id]: 6,
 } as const;
 
+// Solana domain ID (used for cross-chain transfers with EVM)
+export const SOLANA_DOMAIN_ID = 5;
+
 // ERC20 ABI for balanceOf function
 export const ERC20_ABI = [
   {
