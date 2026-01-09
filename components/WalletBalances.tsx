@@ -169,6 +169,7 @@ function ChainBalance({
       const tokenMessengerAddress = TOKEN_MESSENGER_ADDRESSES[chain.id as keyof typeof TOKEN_MESSENGER_ADDRESSES] as `0x${string}`;
       const usdcAddress = USDC_ADDRESSES[chain.id as keyof typeof USDC_ADDRESSES] as `0x${string}`;
       const amountInWei = parseUnits(amount, USDC_DECIMALS);
+      const sourceDomain = CHAIN_DOMAINS[chain.id as keyof typeof CHAIN_DOMAINS];
       const destinationDomain = CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
 
       // Convert recipient address to bytes32 (pad to 32 bytes)
@@ -177,8 +178,59 @@ function ChainBalance({
       // Set to processing state
       setSteps(prev => ({ ...prev, deposit: { status: 'processing' } }));
 
+      // Fetch fee from Iris API
+      const apiUrl = environment === 'mainnet'
+        ? 'https://iris-api.circle.com'
+        : 'https://iris-api-sandbox.circle.com';
+
+      let fee = BigInt(1000); // Default fallback
+      let finalityThreshold = 0;
+
+      try {
+        const feeResponse = await fetch(
+          `${apiUrl}/v2/burn/USDC/fees/${sourceDomain}/${destinationDomain}`,
+          {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json',
+            },
+          }
+        );
+
+        const feeData = await feeResponse.json();
+
+        console.log('feeData', feeData);
+
+        // Find the fee with finalityThreshold of 1000
+        if (Array.isArray(feeData)) {
+          const selectedFee = feeData.find((f: any) => f.finalityThreshold === 1000);
+          if (selectedFee) {
+            // Handle both integer and float values for maxFee (in basis points)
+            const bps = parseFloat(selectedFee.minimumFee);
+
+            // Calculate expected fee: (amount * bps / 10000) + 1
+            // For float bps, multiply by 100 to convert to integer basis points
+            const bpsInteger = Math.floor(bps * 1000);
+
+            console.log('bpsInteger', bpsInteger);
+            const expectedFee = (amountInWei * BigInt(bpsInteger)) / BigInt(10000000) + BigInt(1);
+
+            console.log('expectedFee', expectedFee);
+
+            // Use the higher of default fee or expected fee
+            if (fee < expectedFee) {
+              fee = expectedFee;
+            }
+            finalityThreshold = selectedFee.finalityThreshold;
+          }
+        } else {
+          console.log('No fees found');
+        }
+      } catch (feeError) {
+        console.warn('Failed to fetch fee from API, using default:', feeError);
+      }
+
       // Submit depositForBurn transaction
-      let fee = amountInWei / BigInt(10000); // 1 bps for fee
       const hash = await writeDeposit({
         address: tokenMessengerAddress,
         abi: parseAbi(TOKEN_MESSENGER_V2_EVM_ABI),
@@ -189,8 +241,8 @@ function ChainBalance({
           mintRecipient,                  // mintRecipient (bytes32)
           usdcAddress,                    // burnToken
           pad('0x0', { size: 32 }),       // destinationCaller (0x0 for any caller)
-          fee,                            // maxFee (1 bps for now)
-          0,                              // minFinalityThreshold (0 for default)
+          fee,                            // maxFee
+          finalityThreshold,              // minFinalityThreshold
         ],
       });
 
