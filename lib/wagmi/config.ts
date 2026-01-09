@@ -20,13 +20,19 @@ export const testnetChains = [
   baseSepolia,
 ] as const;
 
+// All chains combined
+const allChains = [
+  ...mainnetChains,
+  ...testnetChains,
+] as const;
+
 // Helper to get chain IDs
 export const mainnetChainIds = mainnetChains.map(chain => chain.id);
 export const testnetChainIds = testnetChains.map(chain => chain.id);
 
-// Wagmi config for mainnet
-export const mainnetConfig = createConfig({
-  chains: mainnetChains,
+// Unified Wagmi config with all chains (both mainnet and testnet)
+export const wagmiConfig = createConfig({
+  chains: allChains,
   connectors: [
     injected(),
     coinbaseWallet({ appName: 'CCTP Bridge' }),
@@ -37,17 +43,6 @@ export const mainnetConfig = createConfig({
     [arbitrum.id]: http(),
     [optimism.id]: http(),
     [base.id]: http(),
-  },
-});
-
-// Wagmi config for testnet
-export const testnetConfig = createConfig({
-  chains: testnetChains,
-  connectors: [
-    injected(),
-    coinbaseWallet({ appName: 'CCTP Bridge (Testnet)' }),
-  ],
-  transports: {
     [sepolia.id]: http(),
     [polygonAmoy.id]: http(),
     [arbitrumSepolia.id]: http(),

@@ -106,19 +106,36 @@ function ChainBalance({
   const destinationPublicClient = usePublicClient({ chainId: destinationChainId || undefined });
 
   // Fetch ETH balance
-  const { data: ethBalance } = useBalance({
+  const { data: ethBalance, refetch: refetchEth } = useBalance({
     address,
     chainId: chain.id,
+    query: {
+      enabled: true,
+      refetchInterval: false,
+    }
   });
 
   // Fetch USDC balance
-  const { data: usdcBalance } = useReadContract({
+  const { data: usdcBalance, refetch: refetchUsdc } = useReadContract({
     address: USDC_ADDRESSES[chain.id as keyof typeof USDC_ADDRESSES] as `0x${string}`,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
     args: [address],
     chainId: chain.id,
+    query: {
+      enabled: true,
+      refetchInterval: false,
+    }
   });
+
+  // Refetch balances when environment changes (mainnet/testnet switch)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      refetchEth();
+      refetchUsdc();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [environment, refetchEth, refetchUsdc]);
 
   const formattedEth = ethBalance ? parseFloat(formatUnits(ethBalance.value, 18)).toFixed(4) : '0.0000';
   const formattedUsdc = usdcBalance ? parseFloat(formatUnits(usdcBalance as bigint, USDC_DECIMALS)).toFixed(2) : '0.00';
