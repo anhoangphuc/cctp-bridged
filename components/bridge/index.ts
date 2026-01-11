@@ -3,3 +3,5 @@
  */
 
 export * from './BridgeStepButton';
+export * from './EVMBridgeCard';
+export * from './SolanaBridgeCard';
