@@ -5,13 +5,19 @@ import { useAccount, useBalance, useReadContract, useWriteContract, usePublicCli
 import { useWallet } from '@solana/wallet-adapter-react';
 import { Transaction } from '@solana/web3.js';
 import { useNetwork } from '@/lib/context/NetworkContext';
-import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, MESSAGE_TRANSMITTER_V2_EVM_ABI, MESSAGE_TRANSMITTER_ADDRESS, CHAIN_DOMAINS } from '@/constants/tokens';
+import { CHAIN_DOMAINS } from '@/constants/cctp';
+import { APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, MESSAGE_TRANSMITTER_V2_EVM_ABI } from '@/constants/abis';
+import { ERC20_ABI } from '@/constants/abis';
+import { USDC_DECIMALS } from '@/constants/addresses';
+import { USDC_ADDRESSES } from '@/constants/addresses';
+import { MESSAGE_TRANSMITTER_ADDRESS } from '@/constants/addresses';
+import { TOKEN_MESSENGER_ADDRESSES } from '@/constants/addresses';
 import { formatUnits, parseUnits, parseAbi, pad } from 'viem';
 import { type Chain } from 'wagmi/chains';
 import { fetchCCTPFee, fetchCCTPAttestation } from '@/lib/cctp/api';
 import { getProgramsV2, getUSDCBalance as getSolanaUSDCBalance, getReceiveMessagePdas, hexToBytes, decodeEventNonceFromMessageV2 } from '@/lib/solana/cctp';
 import { useCustomConnection } from '@/lib/solana/SolanaWalletProvider';
-import { getSolanaUSDCMint } from '@/constants/solana';
+import { getSolanaUSDCMint } from '@/constants/addresses';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { BridgeStepButton } from './BridgeStepButton';
 

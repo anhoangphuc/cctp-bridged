@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { formatUnits, parseUnits } from 'viem';
 import { fetchCCTPFee } from '@/lib/cctp/api';
-import { CHAIN_DOMAINS, USDC_DECIMALS } from '@/constants/tokens';
+import { CHAIN_DOMAINS } from '@/constants/cctp';
+import { USDC_DECIMALS } from '@/constants/addresses';
 
 interface UseCCTPFeeParams {
   sourceChainId: number | 'solana';

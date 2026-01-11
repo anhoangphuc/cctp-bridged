@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { fetchCCTPAttestation } from '@/lib/cctp/api';
-import { CHAIN_DOMAINS } from '@/constants/tokens';
+import { CHAIN_DOMAINS } from '@/constants/cctp';
 
 interface AttestationResult {
   attestation: string;

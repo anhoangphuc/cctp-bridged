@@ -17,7 +17,7 @@ import {
 } from '@solana/spl-token';
 import {
   getSolanaUSDCMint,
-} from '@/constants/solana';
+} from '@/constants/addresses';
 
 // Import IDL types and JSON
 import { MessageTransmitterV2 } from '@/lib/abis/message_transmitter_v2';
