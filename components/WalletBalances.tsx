@@ -89,7 +89,8 @@ function ChainBalance({
   availableChains: readonly Chain[];
 }) {
   const { environment } = useNetwork();
-  const [destinationChainId, setDestinationChainId] = useState<number | null>(null);
+  const { publicKey: solanaPublicKey } = useWallet();
+  const [destinationChainId, setDestinationChainId] = useState<number | 'solana' | null>(null);
   const [amount, setAmount] = useState('');
   const [minimumFee, setMinimumFee] = useState<string>('0');
   const [steps, setSteps] = useState<Record<string, StepState>>({
@@ -107,8 +108,10 @@ function ChainBalance({
   const { switchChainAsync } = useSwitchChain();
   const { chain: currentChain } = useAccount();
 
-  // Get public client for destination chain
-  const destinationPublicClient = usePublicClient({ chainId: destinationChainId || undefined });
+  // Get public client for destination chain (only for EVM destinations)
+  const destinationPublicClient = usePublicClient({
+    chainId: typeof destinationChainId === 'number' ? destinationChainId : undefined
+  });
 
   // Fetch ETH balance
   const { data: ethBalance, refetch: refetchEth } = useBalance({
@@ -164,6 +167,7 @@ function ChainBalance({
   };
 
   const destinationChain = availableChains.find(c => c.id === destinationChainId);
+  const isSolanaDestination = destinationChainId === 'solana';
 
   // Fetch minimum fee when destination chain or amount changes
   useEffect(() => {
@@ -176,7 +180,10 @@ function ChainBalance({
       try {
         const amountInWei = parseUnits(amount, USDC_DECIMALS);
         const sourceDomain = CHAIN_DOMAINS[chain.id as keyof typeof CHAIN_DOMAINS];
-        const destinationDomain = CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
+        // Solana domain is 5
+        const destinationDomain = isSolanaDestination
+          ? 5
+          : CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
 
         const { fee } = await fetchCCTPFee(
           environment,
@@ -196,13 +203,28 @@ function ChainBalance({
     };
 
     fetchFee();
-  }, [destinationChainId, amount, chain.id, environment]);
+  }, [destinationChainId, amount, chain.id, environment, isSolanaDestination]);
 
   // Handler for Approve step
   const handleApprove = async () => {
-    if (!destinationChainId || !amount || !publicClient) return;
+    if (!destinationChainId || !amount) return;
 
     try {
+      // Check if wallet is on the correct network (source chain)
+      if (currentChain?.id !== chain.id) {
+        console.log('Switching network to source chain:', chain.id);
+
+        // Prompt user to switch to source network
+        await switchChainAsync({ chainId: chain.id });
+
+        // Wait longer for the network switch to complete and wagmi to update
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      if (!publicClient) {
+        throw new Error('Public client not available');
+      }
+
       const tokenMessengerAddress = TOKEN_MESSENGER_ADDRESSES[chain.id as keyof typeof TOKEN_MESSENGER_ADDRESSES] as `0x${string}`;
       const usdcAddress = USDC_ADDRESSES[chain.id as keyof typeof USDC_ADDRESSES] as `0x${string}`;
       const amountInWei = parseUnits(amount, USDC_DECIMALS);
@@ -210,12 +232,13 @@ function ChainBalance({
       // Set to processing state
       setSteps(prev => ({ ...prev, approve: { status: 'processing' } }));
 
-      // Submit transaction
+      // Submit transaction with explicit chainId
       const hash = await writeApprove({
         address: usdcAddress,
         abi: parseAbi(APPROVE_EVM_ABI),
         functionName: 'approve',
         args: [tokenMessengerAddress, amountInWei],
+        chainId: chain.id,
       });
 
       // Store hash and continue processing
@@ -250,17 +273,55 @@ function ChainBalance({
 
   // Handler for Deposit step
   const handleDeposit = async () => {
-    if (!destinationChainId || !amount || !publicClient) return;
+    if (!destinationChainId || !amount) return;
+
+    // Check if Solana wallet is connected when bridging to Solana
+    if (isSolanaDestination && !solanaPublicKey) {
+      setSteps(prev => ({
+        ...prev,
+        deposit: {
+          status: 'error',
+          error: 'Please connect Solana wallet to bridge to Solana',
+        },
+      }));
+      return;
+    }
 
     try {
+      // Check if wallet is on the correct network (source chain)
+      if (currentChain?.id !== chain.id) {
+        console.log('Switching network to source chain:', chain.id);
+
+        // Prompt user to switch to source network
+        await switchChainAsync({ chainId: chain.id });
+
+        // Wait longer for the network switch to complete and wagmi to update
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      if (!publicClient) {
+        throw new Error('Public client not available');
+      }
+
       const tokenMessengerAddress = TOKEN_MESSENGER_ADDRESSES[chain.id as keyof typeof TOKEN_MESSENGER_ADDRESSES] as `0x${string}`;
       const usdcAddress = USDC_ADDRESSES[chain.id as keyof typeof USDC_ADDRESSES] as `0x${string}`;
       const amountInWei = parseUnits(amount, USDC_DECIMALS);
       const sourceDomain = CHAIN_DOMAINS[chain.id as keyof typeof CHAIN_DOMAINS];
-      const destinationDomain = CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
+      // Solana domain is 5
+      const destinationDomain = isSolanaDestination
+        ? 5
+        : CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
 
       // Convert recipient address to bytes32 (pad to 32 bytes)
-      const mintRecipient = pad(address as `0x${string}`, { size: 32 });
+      // For Solana, convert Solana public key to bytes32
+      let mintRecipient: `0x${string}`;
+      if (isSolanaDestination && solanaPublicKey) {
+        // Convert Solana PublicKey to bytes32
+        const solanaBytes = solanaPublicKey.toBytes();
+        mintRecipient = `0x${Buffer.from(solanaBytes).toString('hex')}` as `0x${string}`;
+      } else {
+        mintRecipient = pad(address as `0x${string}`, { size: 32 });
+      }
 
       // Set to processing state
       setSteps(prev => ({ ...prev, deposit: { status: 'processing' } }));
@@ -274,7 +335,7 @@ function ChainBalance({
         1000 // Target finality threshold
       );
 
-      // Submit depositForBurn transaction
+      // Submit depositForBurn transaction with explicit chainId
       const hash = await writeDeposit({
         address: tokenMessengerAddress,
         abi: parseAbi(TOKEN_MESSENGER_V2_EVM_ABI),
@@ -288,6 +349,7 @@ function ChainBalance({
           fee,                            // maxFee
           finalityThreshold,              // minFinalityThreshold
         ],
+        chainId: chain.id,
       });
 
       // Store hash and continue processing
@@ -362,8 +424,44 @@ function ChainBalance({
 
   // Handler for Claim step
   const handleClaim = async () => {
-    if (!destinationChainId || !destinationPublicClient || !steps.fetchAttestation.attestation || !steps.fetchAttestation.messageHash) {
+    if (!destinationChainId || !steps.fetchAttestation.attestation || !steps.fetchAttestation.messageHash) {
       console.error('Missing required data for claim');
+      return;
+    }
+
+    // Handle Solana destination separately
+    if (isSolanaDestination) {
+      try {
+        setSteps(prev => ({ ...prev, claim: { status: 'processing' } }));
+
+        // TODO: Implement Solana claim (receiveMessage)
+        // This will:
+        // 1. Call receiveMessage on Solana MessageTransmitter program
+        // 2. Mint USDC to the recipient's Solana wallet
+        console.log('Claiming on Solana...', {
+          messageBytes: steps.fetchAttestation.messageHash,
+          attestation: steps.fetchAttestation.attestation,
+          recipient: solanaPublicKey?.toBase58(),
+        });
+
+        // Placeholder - will be implemented later
+        throw new Error('Solana claim not yet implemented');
+      } catch (error) {
+        console.error('Claim error:', error);
+        setSteps(prev => ({
+          ...prev,
+          claim: {
+            status: 'error',
+            error: error instanceof Error ? error.message : 'Claim failed',
+          },
+        }));
+      }
+      return;
+    }
+
+    // Handle EVM destination
+    if (!destinationPublicClient) {
+      console.error('Missing destination public client for EVM claim');
       return;
     }
 
@@ -371,7 +469,7 @@ function ChainBalance({
       setSteps(prev => ({ ...prev, claim: { status: 'processing' } }));
 
       // Check if wallet is on the correct network (destination chain)
-      if (currentChain?.id !== destinationChainId) {
+      if (typeof destinationChainId === 'number' && currentChain?.id !== destinationChainId) {
         console.log('Switching network to destination chain:', destinationChainId);
 
         // Prompt user to switch to destination network
@@ -503,7 +601,14 @@ function ChainBalance({
           <div>
             <select
               value={destinationChainId || ''}
-              onChange={(e) => setDestinationChainId(Number(e.target.value) || null)}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value === 'solana') {
+                  setDestinationChainId('solana');
+                } else {
+                  setDestinationChainId(Number(value) || null);
+                }
+              }}
               className="w-full px-4 py-2.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-50 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">Select network</option>
@@ -512,6 +617,7 @@ function ChainBalance({
                   {destChain.name}
                 </option>
               ))}
+              <option value="solana">Solana {environment === 'testnet' ? 'Devnet' : ''}</option>
             </select>
           </div>
           <div className="space-y-3">
@@ -607,7 +713,7 @@ function ChainBalance({
               step="Claim"
               status={steps.claim.status}
               txHash={steps.claim.txHash}
-              chainId={destinationChainId || chain.id}
+              chainId={typeof destinationChainId === 'number' ? destinationChainId : undefined}
               getExplorerUrl={getExplorerUrl}
               error={steps.claim.error}
               onClick={handleClaim}
