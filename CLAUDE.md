@@ -46,10 +46,26 @@ CCTP enables native USDC transfers across blockchains by burning USDC on the sou
 
 ### Network Configuration
 
-The UI must support configurable RPC URLs for each network:
-- Store network configurations (chain ID, RPC URL, contract addresses)
-- Allow users to modify RPC endpoints via UI settings
-- Validate RPC connectivity before transactions
+The UI supports two deployment modes controlled by environment variable:
+
+**Testnet Only Mode (Default - Recommended for Development):**
+- Set `NEXT_PUBLIC_ENABLE_MAINNET=false` in `.env.local`
+- Only testnet networks available (Sepolia, Amoy, Solana Devnet, etc.)
+- Network switcher is hidden, shows static "Testnet" badge
+- Safer for development, no risk of using real funds
+
+**Full Mode (Mainnet + Testnet):**
+- Set `NEXT_PUBLIC_ENABLE_MAINNET=true` in `.env.local`
+- Both mainnet and testnet networks available
+- Network switcher dropdown visible
+- Users can toggle between mainnet and testnet
+- For production deployments
+
+Configuration files:
+- `.env.local.example` - Environment variable template
+- `lib/config.ts` - Centralized configuration logic
+- `lib/context/NetworkContext.tsx` - Network state management with safety checks
+- `components/Header.tsx` - Conditional network switcher UI
 
 ## UI Design Principles
 
