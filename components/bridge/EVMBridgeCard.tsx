@@ -3,13 +3,13 @@
 import { useState, useEffect } from 'react';
 import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey, Transaction } from '@solana/web3.js';
+import { Transaction } from '@solana/web3.js';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, MESSAGE_TRANSMITTER_V2_EVM_ABI, MESSAGE_TRANSMITTER_ADDRESS, CHAIN_DOMAINS } from '@/constants/tokens';
 import { formatUnits, parseUnits, parseAbi, pad } from 'viem';
 import { type Chain } from 'wagmi/chains';
 import { fetchCCTPFee, fetchCCTPAttestation } from '@/lib/cctp/api';
-import { evmAddressToBytes32, getDepositForBurnPdas, getProgramsV2, getUSDCBalance as getSolanaUSDCBalance, getReceiveMessagePdas, hexToBytes, decodeEventNonceFromMessageV2 } from '@/lib/solana/cctp';
+import { getProgramsV2, getUSDCBalance as getSolanaUSDCBalance, getReceiveMessagePdas, hexToBytes, decodeEventNonceFromMessageV2 } from '@/lib/solana/cctp';
 import { useCustomConnection } from '@/lib/solana/SolanaWalletProvider';
 import { getSolanaUSDCMint } from '@/constants/solana';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
@@ -41,7 +41,7 @@ export function EVMBridgeCard({
   availableChains,
 }: EVMBridgeCardProps) {
   const { environment } = useNetwork();
-  const connection = useCustomConnection();
+  const solanaConnection = useCustomConnection();
   const { publicKey: solanaPublicKey, sendTransaction: solanaSendTransaction } = useWallet();
   const [destinationChainId, setDestinationChainId] = useState<number | 'solana' | null>(null);
   const [amount, setAmount] = useState('');
@@ -121,7 +121,6 @@ export function EVMBridgeCard({
     });
   };
 
-  const destinationChain = availableChains.find(c => c.id === destinationChainId);
   const isSolanaDestination = destinationChainId === 'solana';
 
   // Fetch minimum fee when destination chain or amount changes
@@ -419,7 +418,7 @@ export function EVMBridgeCard({
         });
 
         // Get programs
-        const { messageTransmitterProgram, tokenMessengerMinterProgram } = await getProgramsV2(connection);
+        const { messageTransmitterProgram, tokenMessengerMinterProgram } = await getProgramsV2(solanaConnection);
 
         // Get Solana USDC mint
         const solUsdcAddress = getSolanaUSDCMint(environment);
@@ -480,11 +479,11 @@ export function EVMBridgeCard({
         const transaction = new Transaction();
         transaction.add(receiveMessageInstruction);
 
-        const { blockhash } = await connection.getLatestBlockhash('confirmed');
+        const { blockhash } = await solanaConnection.getLatestBlockhash('confirmed');
         transaction.recentBlockhash = blockhash;
         transaction.feePayer = solanaPublicKey;
 
-        const signature = await solanaSendTransaction(transaction, connection, { skipPreflight: true });
+        const signature = await solanaSendTransaction(transaction, solanaConnection, { skipPreflight: true });
 
         console.log('Claim transaction submitted:', signature);
 
@@ -500,7 +499,7 @@ export function EVMBridgeCard({
             throw new Error('Transaction confirmation timeout - please check the transaction status on Solana Explorer');
           }
 
-          const { value: txStatus } = await connection.getSignatureStatus(signature);
+          const { value: txStatus } = await solanaConnection.getSignatureStatus(signature);
 
           if (txStatus && (txStatus.confirmationStatus === 'confirmed' || txStatus.confirmationStatus === 'finalized')) {
             if (txStatus.err) {
