@@ -10,7 +10,7 @@ import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, AP
 import { formatUnits, parseUnits, parseAbi, pad  } from 'viem';
 import { hoodi, type Chain } from 'wagmi/chains';
 import { fetchCCTPFee, fetchCCTPAttestation } from '@/lib/cctp/api';
-import { evmAddressToBytes32, getDepositForBurnPdas as getDepositForBurnPdas, getProgramsV2, getUSDCBalance as getSolanaUSDCBalance } from '@/lib/solana/cctp';
+import { evmAddressToBytes32, getDepositForBurnPdas as getDepositForBurnPdas, getProgramsV2, getUSDCBalance as getSolanaUSDCBalance, getReceiveMessagePdas, hexToBytes, decodeEventNonceFromMessageV2 } from '@/lib/solana/cctp';
 import { useCustomConnection } from '@/lib/solana/SolanaWalletProvider';
 import { getSolanaUSDCMint } from '@/constants/solana';
 import * as anchor from '@coral-xyz/anchor';
@@ -89,7 +89,8 @@ function ChainBalance({
   availableChains: readonly Chain[];
 }) {
   const { environment } = useNetwork();
-  const { publicKey: solanaPublicKey } = useWallet();
+  const connection = useCustomConnection();
+  const { publicKey: solanaPublicKey, sendTransaction: solanaSendTransaction } = useWallet();
   const [destinationChainId, setDestinationChainId] = useState<number | 'solana' | null>(null);
   const [amount, setAmount] = useState('');
   const [minimumFee, setMinimumFee] = useState<string>('0');
@@ -317,7 +318,9 @@ function ChainBalance({
       let mintRecipient: `0x${string}`;
       if (isSolanaDestination && solanaPublicKey) {
         // Convert Solana PublicKey to bytes32
-        const solanaBytes = solanaPublicKey.toBytes();
+        const solanaUsdcMint = getSolanaUSDCMint(environment);
+        const recipientTokenAccount = await getAssociatedTokenAddress(solanaUsdcMint, solanaPublicKey, false, TOKEN_PROGRAM_ID);
+        const solanaBytes = recipientTokenAccount.toBytes();
         mintRecipient = `0x${Buffer.from(solanaBytes).toString('hex')}` as `0x${string}`;
       } else {
         mintRecipient = pad(address as `0x${string}`, { size: 32 });
@@ -434,18 +437,130 @@ function ChainBalance({
       try {
         setSteps(prev => ({ ...prev, claim: { status: 'processing' } }));
 
-        // TODO: Implement Solana claim (receiveMessage)
-        // This will:
-        // 1. Call receiveMessage on Solana MessageTransmitter program
-        // 2. Mint USDC to the recipient's Solana wallet
+        if (!solanaPublicKey) {
+          throw new Error('Solana wallet not connected');
+        }
+
+        if (!solanaSendTransaction) {
+          throw new Error('Wallet does not support sending transactions');
+        }
+
+        // Get the message bytes and attestation from fetchAttestation step
+        const messageBytes = steps.fetchAttestation.messageHash as string;
+        const attestation = steps.fetchAttestation.attestation as string;
+
+        // Parse message to extract source domain and nonce
+        const messageBuffer = hexToBytes(messageBytes);
+
+        // CCTP Message format:
+        // version (4 bytes) + sourceDomain (4 bytes) + destinationDomain (4 bytes) + nonce (8 bytes) + ...
+        const sourceDomain = messageBuffer.readUInt32BE(4);
+        const nonce = decodeEventNonceFromMessageV2(messageBytes);
+
         console.log('Claiming on Solana...', {
-          messageBytes: steps.fetchAttestation.messageHash,
-          attestation: steps.fetchAttestation.attestation,
-          recipient: solanaPublicKey?.toBase58(),
+          messageBytes,
+          attestation,
+          recipient: solanaPublicKey.toBase58(),
+          sourceDomain,
         });
 
-        // Placeholder - will be implemented later
-        throw new Error('Solana claim not yet implemented');
+        // Get programs
+        const { messageTransmitterProgram, tokenMessengerMinterProgram } = await getProgramsV2(connection);
+
+        // Get Solana USDC mint
+        const solUsdcAddress = getSolanaUSDCMint(environment);
+
+        // Get source chain USDC address (the token being burned on source chain)
+        const sourceChainUsdcAddress = USDC_ADDRESSES[chain.id as keyof typeof USDC_ADDRESSES];
+
+        // Get all required PDAs for receiveMessage
+        const pdas = await getReceiveMessagePdas(
+          { messageTransmitterProgram, tokenMessengerMinterProgram },
+          solUsdcAddress,
+          sourceChainUsdcAddress,
+          sourceDomain.toString(),
+          nonce
+        );
+
+        // Get or create recipient's USDC token account
+        const recipientUsdcAccount = await getAssociatedTokenAddress(
+          solUsdcAddress,
+          solanaPublicKey,
+          false,
+          TOKEN_PROGRAM_ID
+        );
+
+        // Build remainingAccounts list in the correct order
+        const remainingAccounts = [
+          { pubkey: pdas.tokenMessengerAccount.publicKey, isSigner: false, isWritable: false },
+          { pubkey: pdas.remoteTokenMessengerKey.publicKey, isSigner: false, isWritable: false },
+          { pubkey: pdas.tokenMinterAccount.publicKey, isSigner: false, isWritable: true },
+          { pubkey: pdas.localToken.publicKey, isSigner: false, isWritable: true },
+          { pubkey: pdas.tokenPair.publicKey, isSigner: false, isWritable: false },
+          { pubkey: pdas.feeRecipientTokenAccount, isSigner: false, isWritable: true },
+          { pubkey: recipientUsdcAccount, isSigner: false, isWritable: true },
+          { pubkey: pdas.custodyTokenAccount.publicKey, isSigner: false, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+          { pubkey: pdas.tokenMessengerEventAuthority.publicKey, isSigner: false, isWritable: false },
+          { pubkey: tokenMessengerMinterProgram.programId, isSigner: false, isWritable: false },
+        ];
+
+        // Build receiveMessage instruction
+        const receiveMessageInstruction = await messageTransmitterProgram.methods
+          .receiveMessage({
+            message: Buffer.from(messageBytes.replace("0x", ""), "hex"),
+            attestation: Buffer.from(attestation.replace("0x", ""), "hex"),
+          })
+          .accounts({
+            payer: solanaPublicKey,
+            caller: solanaPublicKey,
+            messageTransmitter: pdas.messageTransmitterAccount.publicKey,
+            usedNonce: pdas.usedNonce,
+            receiver: tokenMessengerMinterProgram.programId,
+            program: messageTransmitterProgram.programId,
+          })
+          .remainingAccounts(remainingAccounts)
+          .instruction();
+
+        // Create and send transaction
+        const transaction = new Transaction();
+        transaction.add(receiveMessageInstruction);
+
+        const { blockhash } = await connection.getLatestBlockhash('confirmed');
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = solanaPublicKey;
+        
+        const signature = await solanaSendTransaction(transaction, connection, { skipPreflight: true });
+
+        console.log('Claim transaction submitted:', signature);
+
+        // Store signature and continue processing
+        setSteps(prev => ({ ...prev, claim: { status: 'processing', txHash: signature } }));
+
+        // Wait for confirmation
+        const startTime = Date.now();
+        const timeout = 60000; // 60 seconds timeout
+
+        while (true) {
+          if (Date.now() - startTime > timeout) {
+            throw new Error('Transaction confirmation timeout - please check the transaction status on Solana Explorer');
+          }
+
+          const { value: txStatus } = await connection.getSignatureStatus(signature);
+
+          if (txStatus && (txStatus.confirmationStatus === 'confirmed' || txStatus.confirmationStatus === 'finalized')) {
+            if (txStatus.err) {
+              throw new Error('Transaction failed: ' + JSON.stringify(txStatus.err));
+            }
+            break;
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        // Transaction successful
+        setSteps(prev => ({ ...prev, claim: { status: 'success', txHash: signature } }));
+
       } catch (error) {
         console.error('Claim error:', error);
         setSteps(prev => ({
@@ -548,6 +663,11 @@ function ChainBalance({
       84532: 'https://sepolia.basescan.org/tx/',
     };
     return `${explorers[chainId] || 'https://etherscan.io/tx/'}${txHash}`;
+  };
+
+  const getSolanaExplorerUrl = (signature: string) => {
+    const cluster = environment === 'mainnet' ? '' : '?cluster=devnet';
+    return `https://solscan.io/tx/${signature}${cluster}`;
   };
 
   return (
@@ -714,7 +834,7 @@ function ChainBalance({
               status={steps.claim.status}
               txHash={steps.claim.txHash}
               chainId={typeof destinationChainId === 'number' ? destinationChainId : undefined}
-              getExplorerUrl={getExplorerUrl}
+              getExplorerUrl={isSolanaDestination && steps.claim.txHash ? () => getSolanaExplorerUrl(steps.claim.txHash!) : getExplorerUrl}
               error={steps.claim.error}
               onClick={handleClaim}
               disabled={steps.fetchAttestation.status !== 'success'}
@@ -972,6 +1092,8 @@ function SolanaBalance({
       const destinationDomain = CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
       const { messageTransmitterProgram, tokenMessengerMinterProgram } = await getProgramsV2(connection);
       const usdcAddress = getSolanaUSDCMint(environment);
+      const userTokenAccount = await getAssociatedTokenAddress(usdcAddress, publicKey, false, TOKEN_PROGRAM_ID);
+      
       const pdas = getDepositForBurnPdas({ messageTransmitterProgram, tokenMessengerMinterProgram }, usdcAddress, destinationDomain);
 
 

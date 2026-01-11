@@ -183,3 +183,99 @@ export const findProgramAddress = (
 
 export const evmAddressToBytes32 = (address: string): string =>
   `0x000000000000000000000000${address.replace("0x", "")}`;
+
+export const getReceiveMessagePdas = async (
+  {
+      messageTransmitterProgram,
+      tokenMessengerMinterProgram,
+  }: ReturnType<typeof getProgramsV2>,
+  solUsdcAddress: PublicKey,
+  remoteUsdcAddressHex: string,
+  remoteDomain: string,
+  nonce: Buffer
+) => {
+  const tokenMessengerAccount = findProgramAddress(
+      "token_messenger",
+      tokenMessengerMinterProgram.programId,
+  );
+  const messageTransmitterAccount = findProgramAddress(
+      "message_transmitter",
+      messageTransmitterProgram.programId
+  );
+  const tokenMinterAccount = findProgramAddress(
+      "token_minter",
+      tokenMessengerMinterProgram.programId
+  );
+  const localToken = findProgramAddress(
+      "local_token",
+      tokenMessengerMinterProgram.programId,
+      [solUsdcAddress]
+  );
+  const remoteTokenMessengerKey = findProgramAddress(
+      "remote_token_messenger",
+      tokenMessengerMinterProgram.programId,
+      [remoteDomain]
+  );
+  const remoteTokenKey = new PublicKey(hexToBytes(remoteUsdcAddressHex));
+  const tokenPair = findProgramAddress(
+      "token_pair",
+      tokenMessengerMinterProgram.programId,
+      [remoteDomain, remoteTokenKey]
+  );
+  const custodyTokenAccount = findProgramAddress(
+      "custody",
+      tokenMessengerMinterProgram.programId,
+      [solUsdcAddress]
+  );
+  const authorityPda = findProgramAddress(
+      "message_transmitter_authority",
+      messageTransmitterProgram.programId,
+      [tokenMessengerMinterProgram.programId]
+  ).publicKey;
+  const tokenMessengerEventAuthority = findProgramAddress(
+      "__event_authority",
+      tokenMessengerMinterProgram.programId
+  );
+  const usedNonce = findProgramAddress(
+      "used_nonce",
+      messageTransmitterProgram.programId,
+      [nonce]
+  ).publicKey;
+
+  const tokenMessengerAccounts =
+      await tokenMessengerMinterProgram.account.tokenMessenger.fetch(
+          tokenMessengerAccount.publicKey
+      );
+  const feeRecipientTokenAccount = await getAssociatedTokenAddress(
+      solUsdcAddress,
+      tokenMessengerAccounts.feeRecipient
+  );
+
+  return {
+      messageTransmitterAccount,
+      tokenMessengerAccount,
+      tokenMinterAccount,
+      localToken,
+      remoteTokenMessengerKey,
+      remoteTokenKey,
+      tokenPair,
+      custodyTokenAccount,
+      authorityPda,
+      tokenMessengerEventAuthority,
+      usedNonce,
+      feeRecipientTokenAccount,
+  };
+};
+
+export const hexToBytes = (hex: string): Buffer => Buffer.from(hex.replace("0x", ""), "hex");
+
+export const decodeEventNonceFromMessageV2 = (messageHex: string): Buffer => {
+  const nonceIndex = 12;
+  const nonceBytesLength = 32;
+  const message = hexToBytes(messageHex);
+  const eventNonceBytes = message.subarray(
+      nonceIndex,
+      nonceIndex + nonceBytesLength
+  );
+  return eventNonceBytes;
+};
