@@ -106,12 +106,26 @@ export function EVMBridgeCard({
     return () => clearTimeout(timer);
   }, [environment, refetchEth, refetchUsdc]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const formattedEth = ethBalance ? parseFloat(formatUnits(ethBalance.value, 18)).toFixed(4) : '0.0000';
   const formattedUsdc = usdcBalance ? parseFloat(formatUnits(usdcBalance as bigint, USDC_DECIMALS)).toFixed(2) : '0.00';
   const usdcBalanceNumber = usdcBalance ? parseFloat(formatUnits(usdcBalance as bigint, USDC_DECIMALS)) : 0;
 
   const handleMaxClick = () => {
     setAmount(usdcBalanceNumber.toString());
+  };
+
+  const handleRefreshBalances = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([refetchEth(), refetchUsdc()]);
+    } catch (error) {
+      console.error('Failed to refresh balances:', error);
+    } finally {
+      // Add a small delay so the user sees the refresh animation
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
   };
 
   const handleNewBridge = () => {
@@ -648,9 +662,31 @@ export function EVMBridgeCard({
       <div className="grid grid-cols-3 gap-8">
         {/* Column 1: Source Network Info */}
         <div className="space-y-4">
-          <h4 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase mb-4">
-            Source
-          </h4>
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-sm font-semibold text-zinc-500 dark:text-zinc-400 uppercase">
+              Source
+            </h4>
+            <button
+              onClick={handleRefreshBalances}
+              disabled={isRefreshing}
+              className="p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50"
+              title="Refresh balance"
+            >
+              <svg
+                className={`w-4 h-4 text-zinc-600 dark:text-zinc-400 ${isRefreshing ? 'animate-spin' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            </button>
+          </div>
           <div>
             <div className="text-lg font-semibold text-zinc-900 dark:text-zinc-50 mb-4">
               {chain.name}
