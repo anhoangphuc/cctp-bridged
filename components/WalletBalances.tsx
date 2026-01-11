@@ -105,9 +105,11 @@ function ChainBalance({
   const { writeContractAsync: writeApprove } = useWriteContract();
   const { writeContractAsync: writeDeposit } = useWriteContract();
   const { writeContractAsync: writeClaim } = useWriteContract();
-  const publicClient = usePublicClient();
   const { switchChainAsync } = useSwitchChain();
   const { chain: currentChain } = useAccount();
+
+  // Get public client for source chain (this one)
+  const sourcePublicClient = usePublicClient({ chainId: chain.id });
 
   // Get public client for destination chain (only for EVM destinations)
   const destinationPublicClient = usePublicClient({
@@ -222,10 +224,6 @@ function ChainBalance({
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
-      if (!publicClient) {
-        throw new Error('Public client not available');
-      }
-
       const tokenMessengerAddress = TOKEN_MESSENGER_ADDRESSES[chain.id as keyof typeof TOKEN_MESSENGER_ADDRESSES] as `0x${string}`;
       const usdcAddress = USDC_ADDRESSES[chain.id as keyof typeof USDC_ADDRESSES] as `0x${string}`;
       const amountInWei = parseUnits(amount, USDC_DECIMALS);
@@ -245,8 +243,12 @@ function ChainBalance({
       // Store hash and continue processing
       setSteps(prev => ({ ...prev, approve: { status: 'processing', txHash: hash } }));
 
-      // Wait for transaction confirmation
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      // Wait for transaction confirmation on source chain
+      if (!sourcePublicClient) {
+        throw new Error('Source chain public client not available');
+      }
+
+      const receipt = await sourcePublicClient.waitForTransactionReceipt({ hash });
 
       if (receipt.status === 'success') {
         setSteps(prev => ({ ...prev, approve: { status: 'success', txHash: hash } }));
@@ -298,10 +300,6 @@ function ChainBalance({
 
         // Wait longer for the network switch to complete and wagmi to update
         await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-
-      if (!publicClient) {
-        throw new Error('Public client not available');
       }
 
       const tokenMessengerAddress = TOKEN_MESSENGER_ADDRESSES[chain.id as keyof typeof TOKEN_MESSENGER_ADDRESSES] as `0x${string}`;
@@ -358,8 +356,12 @@ function ChainBalance({
       // Store hash and continue processing
       setSteps(prev => ({ ...prev, deposit: { status: 'processing', txHash: hash } }));
 
-      // Wait for transaction confirmation
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      // Wait for transaction confirmation on source chain
+      if (!sourcePublicClient) {
+        throw new Error('Source chain public client not available');
+      }
+
+      const receipt = await sourcePublicClient.waitForTransactionReceipt({ hash });
 
       if (receipt.status === 'success') {
         setSteps(prev => ({ ...prev, deposit: { status: 'success', txHash: hash } }));
@@ -387,7 +389,7 @@ function ChainBalance({
 
   // Handler for Fetch Attestation step
   const handleFetchAttestation = async () => {
-    if (!publicClient || !steps.deposit.txHash) return;
+    if (!steps.deposit.txHash) return;
 
     try {
       setSteps(prev => ({ ...prev, fetchAttestation: { status: 'processing' } }));
