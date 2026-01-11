@@ -3,6 +3,8 @@
  *
  * Functions for burning and minting USDC on Solana using Circle's CCTP protocol
  */
+import * as anchor from '@coral-xyz/anchor';
+import { Program, AnchorProvider } from '@coral-xyz/anchor';
 
 import {
   Connection,
@@ -16,6 +18,12 @@ import {
 import {
   getSolanaUSDCMint,
 } from '@/constants/solana';
+
+// Import IDL types and JSON
+import { MessageTransmitterV2 } from '@/lib/abis/message_transmitter_v2';
+import { TokenMessengerMinterV2 } from '@/lib/abis/token_messenger_minter_v2';
+import MessageTransmitterIDL from '@/lib/abis/message_transmitter_v2.json';
+import TokenMessengerMinterIDL from '@/lib/abis/token_messenger_minter_v2.json';
 
 /**
  * Get or create associated token account for USDC
@@ -60,3 +68,118 @@ export async function getUSDCBalance(
   }
 }
 
+/**
+ * Get Anchor programs for CCTP V2
+ *
+ * @param connection - Solana connection (mainnet or devnet)
+ * @returns Object containing MessageTransmitter and TokenMessengerMinter programs
+ */
+export const getProgramsV2 = (connection: Connection) => {
+  // Create a dummy wallet for read-only operations
+  // For transactions, the actual wallet will be provided
+  const dummyWallet = {
+    publicKey: PublicKey.default,
+    signTransaction: async (tx: any) => tx,
+    signAllTransactions: async (txs: any[]) => txs,
+  };
+
+  // Create Anchor provider with the connection
+  const provider = new AnchorProvider(
+    connection,
+    dummyWallet as any,
+    { commitment: 'confirmed' }
+  );
+
+  // Initialize Message Transmitter program
+  const messageTransmitterProgram = new Program<MessageTransmitterV2>(
+    MessageTransmitterIDL as any,
+    provider
+  );
+
+  // Initialize Token Messenger Minter program
+  const tokenMessengerMinterProgram = new Program<TokenMessengerMinterV2>(
+    TokenMessengerMinterIDL as any,
+    provider
+  );
+
+  return {
+    messageTransmitterProgram,
+    tokenMessengerMinterProgram,
+  };
+};
+
+export const getDepositForBurnPdas = (
+  {
+    messageTransmitterProgram,
+    tokenMessengerMinterProgram,
+  }: ReturnType<typeof getProgramsV2>,
+  usdcAddress: PublicKey,
+  destinationDomain: number,
+) => {
+  const messageTransmitterAccount = findProgramAddress(
+    "message_transmitter",
+    messageTransmitterProgram.programId
+  );
+  const tokenMessengerAccount = findProgramAddress(
+    "token_messenger",
+    tokenMessengerMinterProgram.programId
+  );
+  const tokenMinterAccount = findProgramAddress(
+    "token_minter",
+    tokenMessengerMinterProgram.programId
+  );
+  const localToken = findProgramAddress(
+    "local_token",
+    tokenMessengerMinterProgram.programId,
+    [usdcAddress]
+  );
+  const remoteTokenMessengerKey = findProgramAddress(
+    "remote_token_messenger",
+    tokenMessengerMinterProgram.programId,
+    [destinationDomain.toString()]
+  );
+  const authorityPda = findProgramAddress(
+    "sender_authority",
+    tokenMessengerMinterProgram.programId
+  );
+
+  return {
+    messageTransmitterAccount,
+    tokenMessengerAccount,
+    tokenMinterAccount,
+    localToken,
+    remoteTokenMessengerKey,
+    authorityPda,
+  };
+}
+
+export interface FindProgramAddressResponse {
+  publicKey: anchor.web3.PublicKey;
+  bump: number;
+}
+
+export const findProgramAddress = (
+  label: string,
+  programId: PublicKey,
+  extraSeeds: (string | number[] | Buffer | PublicKey)[] | undefined = undefined
+): FindProgramAddressResponse => {
+  const seeds = [Buffer.from(anchor.utils.bytes.utf8.encode(label))];
+  if (extraSeeds) {
+    for (const extraSeed of extraSeeds) {
+      if (typeof extraSeed === "string") {
+        seeds.push(Buffer.from(anchor.utils.bytes.utf8.encode(extraSeed)));
+      } else if (Array.isArray(extraSeed)) {
+        seeds.push(Buffer.from(extraSeed as number[]));
+      } else if (Buffer.isBuffer(extraSeed)) {
+        seeds.push(extraSeed as any);
+      } else if (extraSeed instanceof PublicKey) {
+        seeds.push(extraSeed.toBuffer() as any);
+      }
+    }
+  }
+  const res = PublicKey.findProgramAddressSync(seeds, programId);
+  return { publicKey: res[0], bump: res[1] };
+};
+
+export const evmAddressToBytes32 = (address: string): string =>
+  `0x000000000000000000000000${address.replace("0x", "")}`;

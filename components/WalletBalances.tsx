@@ -3,15 +3,20 @@
 import { useState, useEffect } from 'react';
 import { useAccount, useBalance, useReadContract, useWriteContract, usePublicClient, useSwitchChain } from 'wagmi';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { Keypair, LAMPORTS_PER_SOL, PublicKey, Transaction, SystemProgram, Connection } from '@solana/web3.js';
 import { useNetwork } from '@/lib/context/NetworkContext';
 import { mainnetChains, testnetChains } from '@/lib/wagmi/config';
 import { USDC_ADDRESSES, USDC_DECIMALS, ERC20_ABI, TOKEN_MESSENGER_ADDRESSES, APPROVE_EVM_ABI, TOKEN_MESSENGER_V2_EVM_ABI, MESSAGE_TRANSMITTER_V2_EVM_ABI, MESSAGE_TRANSMITTER_ADDRESS, CHAIN_DOMAINS } from '@/constants/tokens';
-import { formatUnits, parseUnits, parseAbi, pad, toHex } from 'viem';
-import type { Chain } from 'wagmi/chains';
+import { formatUnits, parseUnits, parseAbi, pad  } from 'viem';
+import { hoodi, type Chain } from 'wagmi/chains';
 import { fetchCCTPFee, fetchCCTPAttestation } from '@/lib/cctp/api';
-import { getUSDCBalance as getSolanaUSDCBalance } from '@/lib/solana/cctp';
+import { evmAddressToBytes32, getDepositForBurnPdas as getDepositForBurnPdas, getProgramsV2, getUSDCBalance as getSolanaUSDCBalance } from '@/lib/solana/cctp';
 import { useCustomConnection } from '@/lib/solana/SolanaWalletProvider';
+import { getSolanaUSDCMint } from '@/constants/solana';
+import * as anchor from '@coral-xyz/anchor';
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
+import { getBytes } from 'ethers';
+import bs58 from 'bs58';
 
 type StepStatus = 'pending' | 'processing' | 'success' | 'error';
 
@@ -629,7 +634,7 @@ function BridgeStepButton({
   status: StepStatus;
   txHash?: string;
   chainId?: number;
-  getExplorerUrl?: (chainId: number, txHash: string) => string;
+  getExplorerUrl?: (chainId: number, txHash: string) => string | (() => string);
   error?: string;
   onClick: () => void;
   disabled: boolean;
@@ -677,6 +682,24 @@ function BridgeStepButton({
     return step;
   };
 
+  const getTransactionUrl = () => {
+    if (!txHash || !getExplorerUrl) return null;
+
+    // For Solana transactions (chainId is undefined), getExplorerUrl is a function that takes no args
+    if (chainId === undefined && typeof getExplorerUrl === 'function') {
+      return (getExplorerUrl as () => string)();
+    }
+
+    // For EVM transactions, getExplorerUrl takes chainId and txHash
+    if (chainId !== undefined && typeof getExplorerUrl === 'function') {
+      return (getExplorerUrl as (chainId: number, txHash: string) => string)(chainId, txHash);
+    }
+
+    return null;
+  };
+
+  const transactionUrl = getTransactionUrl();
+
   return (
     <div className="space-y-2">
       <button
@@ -698,9 +721,9 @@ function BridgeStepButton({
         {getStatusIcon()}
       </button>
 
-      {txHash && chainId && getExplorerUrl && (
+      {transactionUrl && (
         <a
-          href={getExplorerUrl(chainId, txHash)}
+          href={transactionUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs text-blue-600 dark:text-blue-400 hover:underline block px-2"
@@ -725,6 +748,7 @@ function SolanaBalance({
   environment: 'mainnet' | 'testnet';
 }) {
   const connection = useCustomConnection();
+  const { sendTransaction } = useWallet();
   const { switchChainAsync } = useSwitchChain();
   const { chain: currentChain, address: evmAddress } = useAccount();
   const [solBalance, setSolBalance] = useState<number>(0);
@@ -745,6 +769,39 @@ function SolanaBalance({
 
   // Get public client for destination chain
   const destinationPublicClient = usePublicClient({ chainId: destinationChainId || undefined });
+
+  // Fetch minimum fee when destination chain or amount changes
+  useEffect(() => {
+    const fetchFee = async () => {
+      if (!destinationChainId || !amount || parseFloat(amount) <= 0) {
+        setMinimumFee('0');
+        return;
+      }
+
+      try {
+        const amountInMicroUsdc = parseUnits(amount, 6); // USDC has 6 decimals
+        const sourceDomain = 5; // Solana domain
+        const destinationDomain = CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
+
+        const { fee } = await fetchCCTPFee(
+          environment,
+          sourceDomain,
+          destinationDomain,
+          amountInMicroUsdc,
+          1000 // Target finality threshold for fast transfer
+        );
+
+        // Convert fee to USDC display format
+        const feeInUsdc = formatUnits(fee, 6);
+        setMinimumFee(parseFloat(feeInUsdc).toFixed(6));
+      } catch (error) {
+        console.error('Failed to fetch fee:', error);
+        setMinimumFee('0');
+      }
+    };
+
+    fetchFee();
+  }, [destinationChainId, amount, environment]);
 
   // Fetch balances
   useEffect(() => {
@@ -805,8 +862,115 @@ function SolanaBalance({
         destinationChainId,
       });
 
-      // Placeholder - will be implemented later
-      throw new Error('Solana deposit not yet implemented');
+      const destinationDomain = CHAIN_DOMAINS[destinationChainId as keyof typeof CHAIN_DOMAINS];
+      const { messageTransmitterProgram, tokenMessengerMinterProgram } = await getProgramsV2(connection);
+      const usdcAddress = getSolanaUSDCMint(environment);
+      const pdas = getDepositForBurnPdas({ messageTransmitterProgram, tokenMessengerMinterProgram }, usdcAddress, destinationDomain);
+
+
+
+      const messageSentEventKeypair = Keypair.generate();
+      if (!evmAddress) {
+        throw new Error('Require connected EVM address');
+      }
+
+      // Fetch fee and finality from Iris API
+      const amountInMicroUsdc = parseUnits(amount, 6);
+      const sourceDomain = 5; // Solana domain
+
+      const { fee, finalityThreshold } = await fetchCCTPFee(
+        environment,
+        sourceDomain,
+        destinationDomain,
+        amountInMicroUsdc,
+        1000 // Target finality threshold for fast transfer
+      );
+
+      // Convert EVM address to bytes32 format and then to Solana PublicKey
+      const evmAddressBytes32 = evmAddressToBytes32(evmAddress);
+      const mintRecipientPubkey = new PublicKey(getBytes(evmAddressBytes32));
+
+      const burnTokenAccount = await getAssociatedTokenAddress(usdcAddress, publicKey, false, TOKEN_PROGRAM_ID);
+
+      const depositInstruction = await tokenMessengerMinterProgram.methods
+        .depositForBurn({
+          amount: new anchor.BN(amountInMicroUsdc.toString()),
+          destinationDomain,
+          mintRecipient: mintRecipientPubkey,
+          destinationCaller: PublicKey.default,
+          maxFee: new anchor.BN(fee.toString()),
+          minFinalityThreshold: finalityThreshold,
+        })
+        .accounts({
+          eventRentPayer: publicKey, // Connected Solana wallet pays for event account rent
+          burnTokenAccount,
+          messageTransmitter: pdas.messageTransmitterAccount.publicKey,
+          tokenMessenger: pdas.tokenMessengerAccount.publicKey,
+          remoteTokenMessenger: pdas.remoteTokenMessengerKey.publicKey,
+          tokenMinter: pdas.tokenMinterAccount.publicKey,
+          burnTokenMint: usdcAddress,
+          messageSentEventData: messageSentEventKeypair.publicKey,
+          program: tokenMessengerMinterProgram.programId,
+        })
+        .accountsPartial({
+          owner: publicKey,
+        })
+        .instruction();
+
+      // Create transaction
+      const transaction = new Transaction();
+
+      // Add rent paymen      // Add deposit instruction
+      transaction.add(depositInstruction);
+
+      // Get recent blockhash
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+      transaction.recentBlockhash = blockhash;
+      transaction.feePayer = publicKey;
+
+      // Sign transaction with message event keypair
+      transaction.partialSign(messageSentEventKeypair);
+
+      if (!sendTransaction) {
+        throw new Error('Wallet does not support sending transactions');
+      }
+
+      const signature = await sendTransaction(transaction, connection, { preflightCommitment: 'confirmed' } );
+
+      console.log('Deposit transaction submitted:', signature);
+
+      // Store signature and continue processing
+      setSteps(prev => ({ ...prev, deposit: { status: 'processing', txHash: signature } }));
+
+      // Wait for confirmation with timeout
+      const startTime = Date.now();
+      const timeout = 60000; // 60 seconds timeout
+
+      // Poll for transaction confirmation
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        // Check if timeout exceeded
+        if (Date.now() - startTime > timeout) {
+          throw new Error('Transaction confirmation timeout - please check the transaction status on Solana Explorer');
+        }
+
+        const { value: txStatus } = await connection.getSignatureStatus(signature);
+
+        if (txStatus && (txStatus.confirmationStatus === 'confirmed' || txStatus.confirmationStatus === 'finalized')) {
+          // Check if transaction failed
+          if (txStatus.err) {
+            throw new Error('Transaction failed: ' + JSON.stringify(txStatus.err));
+          }
+          break;
+        }
+
+        // Delay next poll (e.g., 500ms)
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      // Transaction successful
+      setSteps(prev => ({ ...prev, deposit: { status: 'success', txHash: signature } }));
+
     } catch (error) {
       console.error('Deposit error:', error);
       setSteps(prev => ({
@@ -907,7 +1071,7 @@ function SolanaBalance({
 
   const getSolanaExplorerUrl = (signature: string) => {
     const cluster = environment === 'mainnet' ? '' : '?cluster=devnet';
-    return `https://explorer.solana.com/tx/${signature}${cluster}`;
+    return `https://solscan.io/tx/${signature}${cluster}`;
   };
 
   return (
