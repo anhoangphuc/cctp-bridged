@@ -751,6 +751,7 @@ function SolanaBalance({
   const { sendTransaction } = useWallet();
   const { switchChainAsync } = useSwitchChain();
   const { chain: currentChain, address: evmAddress } = useAccount();
+  const { writeContractAsync: writeClaim } = useWriteContract();
   const [solBalance, setSolBalance] = useState<number>(0);
   const [usdcBalance, setUsdcBalance] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -990,12 +991,29 @@ function SolanaBalance({
     try {
       setSteps(prev => ({ ...prev, fetchAttestation: { status: 'processing' } }));
 
-      // TODO: Implement attestation fetching from Circle's API
-      // This will use Solana domain (5) and the transaction signature
-      console.log('Fetching attestation for Solana tx:', steps.deposit.txHash);
+      // Get Solana domain
+      const sourceDomain = 5; // Solana domain
+      const txHash = steps.deposit.txHash;
 
-      // Placeholder - will be implemented later
-      throw new Error('Attestation fetching not yet implemented');
+      console.log('Fetching attestation for Solana tx:', txHash);
+
+      // Fetch attestation from Circle's Iris API
+      const { attestation, messageBytes } = await fetchCCTPAttestation(
+        environment,
+        sourceDomain,
+        txHash,
+        60,    // maxAttempts: Try for up to 2 minutes (60 * 2 seconds)
+        2000   // pollInterval: 2 seconds
+      );
+
+      setSteps(prev => ({
+        ...prev,
+        fetchAttestation: {
+          status: 'success',
+          attestation,
+          messageHash: messageBytes,
+        },
+      }));
     } catch (error) {
       console.error('Fetch attestation error:', error);
       setSteps(prev => ({
@@ -1029,16 +1047,47 @@ function SolanaBalance({
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      // TODO: Implement claim on EVM chain
-      // This will call receiveMessage on MessageTransmitter
-      console.log('Claiming on EVM chain...', {
+      // Get MessageTransmitter address on destination chain
+      const messageTransmitterAddress = MESSAGE_TRANSMITTER_ADDRESS[destinationChainId as keyof typeof MESSAGE_TRANSMITTER_ADDRESS] as `0x${string}`;
+
+      // Get the message bytes and attestation from fetchAttestation step
+      const messageBytes = steps.fetchAttestation.messageHash as `0x${string}`;
+      const attestation = steps.fetchAttestation.attestation as `0x${string}`;
+
+      console.log('Claiming on destination chain:', {
         destinationChainId,
-        messageBytes: steps.fetchAttestation.messageHash,
-        attestation: steps.fetchAttestation.attestation,
+        messageTransmitterAddress,
+        messageBytes,
+        attestation,
       });
 
-      // Placeholder - will be implemented later
-      throw new Error('Claim not yet implemented');
+      // Submit receiveMessage transaction on destination chain
+      const hash = await writeClaim({
+        address: messageTransmitterAddress,
+        abi: parseAbi(MESSAGE_TRANSMITTER_V2_EVM_ABI),
+        functionName: 'receiveMessage',
+        args: [messageBytes, attestation],
+        chainId: destinationChainId,
+      });
+
+      // Store hash and continue processing
+      setSteps(prev => ({ ...prev, claim: { status: 'processing', txHash: hash } }));
+
+      // Wait for transaction confirmation on destination chain
+      const receipt = await destinationPublicClient.waitForTransactionReceipt({ hash });
+
+      if (receipt.status === 'success') {
+        setSteps(prev => ({ ...prev, claim: { status: 'success', txHash: hash } }));
+      } else {
+        setSteps(prev => ({
+          ...prev,
+          claim: {
+            status: 'error',
+            txHash: hash,
+            error: 'Transaction reverted',
+          },
+        }));
+      }
     } catch (error) {
       console.error('Claim error:', error);
       setSteps(prev => ({
