@@ -35,10 +35,16 @@ export function Header() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Logo/Title */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6">
             <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
               CCTP Bridge
             </h1>
+            <a
+              href="/tutorial"
+              className="text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+            >
+              Tutorial
+            </a>
             <div className="flex items-center gap-2">
               {/* GitHub Link */}
               <a
